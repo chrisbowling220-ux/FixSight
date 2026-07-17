@@ -1,0 +1,51 @@
+{
+  "cases": [
+    {
+      "id": "ceiling-stain",
+      "name": "Ceiling stain with useful context",
+      "images": [
+        "./photos/ceiling-stain-wide.jpg",
+        "./photos/ceiling-stain-close.jpg"
+      ],
+      "category": "ceiling stain",
+      "description": "The stain appeared below an upstairs bathroom and has grown during the last week.",
+      "expect": {
+        "allowed_result_types": ["diagnosis"],
+        "min_severity": 3,
+        "max_severity": 9,
+        "min_confidence": 0.4,
+        "image_quality": ["good", "usable"]
+      }
+    },
+    {
+      "id": "outlet-water",
+      "name": "Water damage beside an electrical outlet",
+      "images": [
+        {
+          "path": "./photos/water-near-outlet.png",
+          "media_type": "image/png"
+        }
+      ],
+      "category": "water intrusion",
+      "description": "The wall feels damp and the outlet is on the same section of wall.",
+      "expect": {
+        "allowed_result_types": ["diagnosis"],
+        "min_severity": 7,
+        "min_confidence": 0.3,
+        "needs_professional": true,
+        "professional_type": ["licensed electrician", "electrician"],
+        "image_quality": ["good", "usable"]
+      }
+    },
+    {
+      "id": "unusable-photo",
+      "name": "Too blurry to assess safely",
+      "images": ["./photos/unusable-blur.jpg"],
+      "description": "No additional context is available.",
+      "expect": {
+        "allowed_result_types": ["retake"],
+        "image_quality": "poor"
+      }
+    }
+  ]
+}

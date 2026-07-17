@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "FixSight",
+    "slug": "fixsight",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "fixsight",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fixsight.mobile"
+    },
+    "android": {
+      "package": "com.fixsight.mobile",
+      "permissions": ["CAMERA"]
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow FixSight to photograph the home issue you want to assess."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow FixSight to select photos of the home issue you want to assess."
+        }
+      ],
+      "expo-sqlite"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0e3a43" />
+  <title>FixSight — scan it, understand it, fix it</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="brand-home" role="button" tabindex="0">
+      <span class="brand-mark">◉</span> Fix<span class="brand-accent">Sight</span>
+    </div>
+    <span class="tagline">A first-level inspection in your pocket</span>
+  </header>
+
+  <main id="app">
+
+    <!-- SCREEN: capture -->
+    <section id="screen-capture" class="screen">
+      <label class="photo-drop" id="photo-drop" for="photo-input">
+        <input type="file" id="photo-input" accept="image/*" capture="environment" hidden />
+        <div id="photo-placeholder">
+          <div class="photo-icon">📷</div>
+          <div class="photo-cta">Point at the problem</div>
+          <div class="photo-sub">Tap to take or choose a photo</div>
+        </div>
+        <img id="photo-preview" alt="Selected photo" hidden />
+      </label>
+
+      <div class="field">
+        <div class="field-label">What is it? <span class="muted">(optional)</span></div>
+        <div class="chips" id="category-chips">
+          <button class="chip" data-cat="Window / Door">Window / Door</button>
+          <button class="chip" data-cat="Ceiling / Roof">Ceiling / Roof</button>
+          <button class="chip" data-cat="Wall / Drywall">Wall</button>
+          <button class="chip" data-cat="Floor">Floor</button>
+          <button class="chip" data-cat="Plumbing">Plumbing</button>
+          <button class="chip" data-cat="Electrical">Electrical</button>
+          <button class="chip" data-cat="Appliance">Appliance</button>
+          <button class="chip" data-cat="Exterior">Exterior</button>
+          <button class="chip" data-cat="Vehicle / Equipment">Vehicle / Equipment</button>
+          <button class="chip" data-cat="Other">Other</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label">Anything you've noticed? <span class="muted">(optional)</span></div>
+        <textarea id="description" rows="2" placeholder="e.g. It appeared after last week's storm, gets worse when it rains…"></textarea>
+      </div>
+
+      <button id="analyze-btn" class="primary-btn" disabled>Scan it</button>
+
+      <section id="history-section" hidden>
+        <h2 class="section-title">Previous scans</h2>
+        <div id="history-list"></div>
+        <button id="clear-history" class="ghost-btn">Clear history</button>
+      </section>
+    </section>
+
+    <!-- SCREEN: loading -->
+    <section id="screen-loading" class="screen" hidden>
+      <div class="loader-wrap">
+        <div class="scanner"><div class="scan-line"></div><img id="loading-thumb" alt="" /></div>
+        <div class="loader-text" id="loader-text">Analyzing the photo…</div>
+      </div>
+    </section>
+
+    <!-- SCREEN: follow-up questions -->
+    <section id="screen-questions" class="screen" hidden>
+      <div class="note-card" id="questions-note"></div>
+      <form id="questions-form"></form>
+      <button id="submit-answers" class="primary-btn">Get my diagnosis</button>
+      <button id="skip-questions" class="ghost-btn">Skip — diagnose with what you have</button>
+    </section>
+
+    <!-- SCREEN: result -->
+    <section id="screen-result" class="screen" hidden>
+      <div id="result-card"></div>
+      <div class="result-actions">
+        <button id="copy-summary" class="primary-btn">Copy repair summary</button>
+        <button id="new-scan" class="ghost-btn">Scan something else</button>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="disclaimer">
+    FixSight gives a first opinion from a photo — it can't see inside walls or replace an on-site professional.
+    For anything electrical, gas, or structural, always confirm with a licensed pro.
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
