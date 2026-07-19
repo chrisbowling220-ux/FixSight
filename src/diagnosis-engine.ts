@@ -34,12 +34,15 @@ export interface DiagnosisEngine {
 }
 
 function contextText(request: AnalyzeRequest): string {
-  const context = {
+  const context: Record<string, unknown> = {
     category: request.category ?? null,
     description: request.description ?? null,
     follow_up_answers: request.answers,
     answers_already_provided: request.answers.length > 0,
   };
+  if (request.vision_mode) {
+    context.vision_mode = request.vision_mode;
+  }
 
   return [
     "Analyze the attached image or images.",

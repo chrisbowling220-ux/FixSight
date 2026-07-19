@@ -29,6 +29,22 @@
         <img id="photo-preview" alt="Selected photo" hidden />
       </label>
 
+      <!-- Vision Mode — revealed after a photo is loaded -->
+      <div id="vision-section" class="field" hidden>
+        <div class="field-label">Vision Mode <span class="muted">(enhance what the AI sees)</span></div>
+        <div class="chips" id="mode-chips">
+          <button class="chip selected" data-mode="">👁 Standard</button>
+          <button class="chip" data-mode="thermal">🌡️ Heat</button>
+          <button class="chip" data-mode="cold">❄️ Cold</button>
+          <button class="chip" data-mode="wet">💧 Wet</button>
+          <button class="chip" data-mode="xray">🔬 X-Ray</button>
+        </div>
+        <div id="mode-preview-wrap" hidden>
+          <div id="mode-preview-label" class="mode-preview-label"></div>
+          <img id="mode-preview-img" class="mode-preview-img" alt="Vision mode preview" />
+        </div>
+      </div>
+
       <div class="field">
         <div class="field-label">What is it? <span class="muted">(optional)</span></div>
         <div class="chips" id="category-chips">

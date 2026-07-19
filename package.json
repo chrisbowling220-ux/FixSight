@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/**/*.test.ts",
+    "test": "tsx --test test/diagnosis-contract.test.ts test/scans-workflow.test.ts",
     "eval": "tsx scripts/evaluate.ts",
     "check": "npm run typecheck && npm test && npm run build"
   },
