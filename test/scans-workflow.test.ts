@@ -23,6 +23,24 @@ import {
 const IMAGE_DATA = Buffer.from([0xff, 0xd8, 0xff, 0xdb]).toString("base64");
 const REQUEST_BODY = {
   images: [{ data: IMAGE_DATA, media_type: "image/jpeg" }],
+  evidence: [
+    {
+      kind: "thermal",
+      data: IMAGE_DATA,
+      media_type: "image/jpeg",
+      location: "ceiling below the bathroom",
+    },
+  ],
+  readings: [
+    {
+      kind: "moisture",
+      scale: "percent_wme",
+      value: 22,
+      location: "center of the stain",
+      reference_value: 8.5,
+      reference_location: "same ceiling, six feet away",
+    },
+  ],
   category: "water intrusion",
   description: "A stain below the upstairs bathroom",
   answers: [],
@@ -69,6 +87,7 @@ const DIAGNOSIS = parseAnalysis({
     professional_type: "plumber",
     safety_warnings: ["Keep people away if the ceiling is sagging."],
     disclaimer_required: true,
+    next_measurement: null,
   },
 });
 
@@ -232,6 +251,13 @@ test("answers use stored images and canonical questions, then close the one refi
   assert.equal(scan.refinement_count, 1);
   assert.equal(api.engine.calls.length, 2);
   assert.deepEqual(api.engine.calls[1]?.images, api.engine.calls[0]?.images);
+  // The refinement leg rebuilds the request field by field, so every stored
+  // channel has to be replayed or the instrument data vanishes on the second
+  // call — silently, and only for scans that supplied any.
+  assert.deepEqual(api.engine.calls[1]?.evidence, api.engine.calls[0]?.evidence);
+  assert.deepEqual(api.engine.calls[1]?.readings, api.engine.calls[0]?.readings);
+  assert.equal(api.engine.calls[1]?.evidence.length, 1);
+  assert.equal(api.engine.calls[1]?.readings.length, 1);
   assert.deepEqual(api.engine.calls[1]?.answers, [
     {
       question_id: "q-duration",
@@ -286,6 +312,13 @@ test("report generation is deterministic and resolving a diagnosis uses no extra
   assert.equal(serializedReport.includes("alice"), false);
   assert.match(serializedReport, /not a professional inspection/);
 
+  // A contractor reading this needs the raw numbers, including whether a dry
+  // reference was taken at all.
+  const report = firstReport.report as Record<string, unknown>;
+  assert.equal((report.readings as unknown[]).length, 1);
+  assert.match(String(report.share_text), /Moisture at center of the stain: 22/);
+  assert.match(String(report.share_text), /dry reference 8\.5/);
+
   const resolvedResponse = await apiFetch(
     api.baseUrl,
     `/${scanId}/resolve`,
@@ -318,6 +351,8 @@ test("in-memory repository is bounded, user-scoped, and returns defensive copies
   });
   const request = {
     images: [{ data: IMAGE_DATA, media_type: "image/jpeg" }],
+    evidence: [],
+    readings: [],
     answers: [],
   } satisfies AnalyzeRequest;
 
@@ -353,6 +388,8 @@ test("repository refinement claims are atomic until released", async () => {
     user_id: "alice",
     request: {
       images: [{ data: IMAGE_DATA, media_type: "image/jpeg" }],
+      evidence: [],
+      readings: [],
       answers: [],
     },
     result: result(QUESTIONS),

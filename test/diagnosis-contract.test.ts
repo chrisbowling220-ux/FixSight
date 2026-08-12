@@ -1,8 +1,10 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ANALYSIS_JSON_SCHEMA,
   applySafetyRules,
+  normalizeAnalysis,
   parseAnalysis,
 } from "../src/diagnosis-contract.js";
 import { parseAnalyzeRequest } from "../src/request-schema.js";
@@ -26,6 +28,7 @@ const VALID_DIAGNOSIS = {
   professional_type: null,
   safety_warnings: [],
   disclaimer_required: true,
+  next_measurement: null,
 } as const;
 
 const VALID_ANALYSIS = {
@@ -278,7 +281,9 @@ test("parseAnalyzeRequest parses canonical multi-image input", () => {
 
   const parsed = parseAnalyzeRequest(value);
 
-  assert.deepEqual(parsed, value);
+  // A request that names no instrument channels gets empty ones, so every
+  // caller written before evidence existed stays valid.
+  assert.deepEqual(parsed, { ...value, evidence: [], readings: [] });
   assert.equal(parsed.images.length, 3);
 });
 
@@ -379,3 +384,314 @@ test("parseAnalyzeRequest rejects invalid image input", async (t) => {
   }
 });
 
+
+// Structured outputs reject length, range, and item-count constraints outright.
+// Zod emits them, so a regression here 400s every single scan.
+test("ANALYSIS_JSON_SCHEMA only uses keywords structured outputs accept", () => {
+  const unsupported = [
+    "minLength", "maxLength", "pattern",
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minItems", "maxItems", "uniqueItems",
+    "minProperties", "maxProperties",
+  ];
+  const found = new Set<string>();
+  const schemaMaps = new Set(["properties", "$defs", "definitions", "patternProperties"]);
+
+  const walk = (node: unknown, insideSchemaMap: boolean): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, false);
+      return;
+    }
+    if (node === null || typeof node !== "object") return;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (!insideSchemaMap && unsupported.includes(key)) found.add(key);
+      walk(value, !insideSchemaMap && schemaMaps.has(key));
+    }
+  };
+
+  walk(ANALYSIS_JSON_SCHEMA, false);
+  assert.deepEqual([...found], [], `unsupported JSON Schema keywords: ${[...found].join(", ")}`);
+});
+
+// enum is supported and is what keeps result_type/urgency/difficulty trustworthy,
+// so the sanitizer must not strip it along with the unsupported keywords.
+test("ANALYSIS_JSON_SCHEMA keeps the enums the contract depends on", () => {
+  const properties = (ANALYSIS_JSON_SCHEMA as { properties: Record<string, { enum?: string[] }> })
+    .properties;
+  assert.deepEqual(properties.result_type?.enum, [
+    "questions", "diagnosis", "retake", "cannot_assess",
+  ]);
+  assert.deepEqual(properties.image_quality?.enum, ["good", "usable", "poor"]);
+
+  // next_measurement.instrument is a controlled vocabulary the client renders
+  // from, so it has to survive schema generation as a real enum.
+  const schema = ANALYSIS_JSON_SCHEMA as Record<string, unknown>;
+  const instruments: string[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (node === null || typeof node !== "object") return;
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum) && record.enum.includes("borescope")) {
+      instruments.push(...(record.enum as string[]));
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(schema);
+  assert.deepEqual(instruments, [
+    "moisture_meter",
+    "thermal_camera",
+    "borescope",
+    "wall_scanner",
+    "hygrometer",
+  ]);
+});
+
+// A 6 MB base64 payload used to throw RangeError from the validation regex,
+// which is well inside the range a phone camera produces.
+test("parseAnalyzeRequest validates a multi-megabyte photo without overflowing", () => {
+  const data = "A".repeat(Math.floor((6 * 1024 * 1024) / 4) * 4);
+  const parsed = parseAnalyzeRequest({
+    images: [{ data, media_type: "image/jpeg" }],
+    answers: [],
+  });
+  assert.equal(parsed.images[0]?.data.length, data.length);
+});
+
+// The model sometimes returns a finished diagnosis while still echoing the
+// questions the user just answered. That must not destroy the diagnosis.
+test("normalizeAnalysis clears arrays the result_type forbids", async (t) => {
+  await t.test("a diagnosis that echoes answered questions still parses", () => {
+    const echoed = {
+      ...VALID_ANALYSIS,
+      follow_up_questions: [
+        {
+          id: "leak-duration",
+          question: "How long has this been leaking?",
+          why_it_matters: "A long-running leak raises the chance of hidden damage.",
+          options: ["Today", "A few days"],
+        },
+      ],
+      retake_guidance: ["Move closer"],
+    };
+
+    assert.throws(() => parseAnalysis(echoed));
+
+    const parsed = parseAnalysis(normalizeAnalysis(echoed));
+    assert.equal(parsed.result_type, "diagnosis");
+    assert.deepEqual(parsed.follow_up_questions, []);
+    assert.deepEqual(parsed.retake_guidance, []);
+    assert.equal(parsed.diagnosis?.subject, VALID_DIAGNOSIS.subject);
+  });
+
+  await t.test("a questions result keeps its questions", () => {
+    const questions = {
+      result_type: "questions",
+      note: "Two details would change the recommendation.",
+      image_quality: "usable",
+      retake_guidance: ["ignored"],
+      follow_up_questions: [
+        {
+          id: "leak-duration",
+          question: "How long has this been leaking?",
+          why_it_matters: "A long-running leak raises the chance of hidden damage.",
+          options: ["Today", "A few days"],
+        },
+      ],
+      diagnosis: null,
+    };
+
+    const parsed = parseAnalysis(normalizeAnalysis(questions));
+    assert.equal(parsed.follow_up_questions.length, 1);
+    assert.deepEqual(parsed.retake_guidance, []);
+  });
+
+  await t.test("a diagnosis result with no diagnosis still fails", () => {
+    assert.throws(() =>
+      parseAnalysis(normalizeAnalysis({ ...VALID_ANALYSIS, diagnosis: null })),
+    );
+  });
+});
+
+const MOISTURE_NEXT_MEASUREMENT = {
+  instrument: "moisture_meter",
+  target: "the center of the stain, then a dry spot on the same ceiling",
+  why: "It separates an active leak from an old stain that has already dried.",
+  expected_discriminator:
+    "Above roughly 20% WME against a dry reference near 9% indicates active entry; within a few points of the reference indicates an old stain.",
+  safety_note: null,
+} as const;
+
+test("a low-confidence diagnosis must propose a next measurement", async (t) => {
+  await t.test("omitting it fails", () => {
+    assert.throws(() =>
+      parseAnalysis(
+        analysisWithDiagnosis({ confidence: 0.42, next_measurement: null }),
+      ),
+    );
+  });
+
+  await t.test("supplying it passes", () => {
+    const parsed = parseAnalysis(
+      analysisWithDiagnosis({
+        confidence: 0.42,
+        next_measurement: MOISTURE_NEXT_MEASUREMENT,
+      }),
+    );
+    assert.equal(
+      parsed.diagnosis?.next_measurement?.instrument,
+      "moisture_meter",
+    );
+  });
+
+  await t.test("high confidence may omit it", () => {
+    const parsed = parseAnalysis(
+      analysisWithDiagnosis({ confidence: 0.91, next_measurement: null }),
+    );
+    assert.equal(parsed.diagnosis?.next_measurement, null);
+  });
+});
+
+// Scanning a wall is a prelude to making a hole in it, so the precaution is
+// not optional.
+test("a wall-scanner measurement requires a safety note", () => {
+  const withoutNote = {
+    ...MOISTURE_NEXT_MEASUREMENT,
+    instrument: "wall_scanner",
+    safety_note: null,
+  };
+  assert.throws(() =>
+    parseAnalysis(analysisWithDiagnosis({ next_measurement: withoutNote })),
+  );
+
+  const parsed = parseAnalysis(
+    analysisWithDiagnosis({
+      next_measurement: {
+        ...withoutNote,
+        safety_note: "Scan the full area before drilling; avoid known circuits.",
+      },
+    }),
+  );
+  assert.equal(parsed.diagnosis?.next_measurement?.instrument, "wall_scanner");
+});
+
+// Telling someone to go take a reading at a spot just declared hazardous is a
+// contradiction; the safety override has to win.
+test("applySafetyRules drops a next measurement it just made pro-only", () => {
+  const parsed = parseAnalysis(
+    analysisWithDiagnosis({
+      confidence: 0.5,
+      professional_type: "electrician",
+      needs_professional: true,
+      next_measurement: MOISTURE_NEXT_MEASUREMENT,
+    }),
+  );
+  assert.equal(parsed.diagnosis?.next_measurement?.instrument, "moisture_meter");
+
+  const guarded = applySafetyRules(parsed);
+  assert.equal(guarded.diagnosis?.next_measurement, null);
+  assert.equal(guarded.diagnosis?.recommendation.difficulty, "pro-only");
+});
+
+test("parseAnalyzeRequest accepts evidence images and instrument readings", () => {
+  const parsed = parseAnalyzeRequest({
+    images: [{ data: JPEG_BASE64, media_type: "image/jpeg" }],
+    evidence: [
+      {
+        kind: "thermal",
+        data: JPEG_BASE64,
+        media_type: "image/jpeg",
+        location: "same ceiling area from the doorway",
+      },
+      { kind: "cavity", data: PNG_BASE64, media_type: "image/png" },
+    ],
+    readings: [
+      {
+        kind: "moisture",
+        scale: "percent_wme",
+        value: 24.5,
+        location: "center of the stain",
+        reference_value: 9,
+        reference_location: "same ceiling, six feet away",
+      },
+      {
+        kind: "humidity",
+        relative_humidity: 68,
+        air_temperature: 71,
+        unit: "f",
+        location: "room center",
+      },
+    ],
+    answers: [],
+  });
+
+  assert.equal(parsed.evidence.length, 2);
+  assert.equal(parsed.evidence[0]?.kind, "thermal");
+  assert.equal(parsed.readings.length, 2);
+  assert.equal(
+    parsed.readings[0]?.kind === "moisture"
+      ? parsed.readings[0].reference_value
+      : null,
+    9,
+  );
+});
+
+test("parseAnalyzeRequest rejects invalid evidence and readings", async (t) => {
+  const image = { data: JPEG_BASE64, media_type: "image/jpeg" } as const;
+
+  await t.test("an unknown evidence kind", () => {
+    assert.throws(() =>
+      parseAnalyzeRequest({
+        images: [image],
+        evidence: [{ kind: "xray", ...image }],
+        answers: [],
+      }),
+    );
+  });
+
+  // Visible photos and evidence share one budget so a scan cannot quietly cost
+  // double the visual tokens the image cap implies.
+  await t.test("more than six images across both arrays", () => {
+    assert.throws(() =>
+      parseAnalyzeRequest({
+        images: [image, image, image, image],
+        evidence: [
+          { kind: "thermal", ...image },
+          { kind: "thermal", ...image },
+          { kind: "cavity", ...image },
+        ],
+        answers: [],
+      }),
+    );
+  });
+
+  await t.test("a numeric moisture scale with no value", () => {
+    assert.throws(() =>
+      parseAnalyzeRequest({
+        images: [image],
+        readings: [
+          { kind: "moisture", scale: "percent_wme", location: "the stain" },
+        ],
+        answers: [],
+      }),
+    );
+  });
+
+  await t.test("a qualitative moisture reading needs no number", () => {
+    const parsed = parseAnalyzeRequest({
+      images: [image],
+      readings: [
+        {
+          kind: "moisture",
+          scale: "qualitative",
+          qualitative: "damp",
+          location: "the stain",
+        },
+      ],
+      answers: [],
+    });
+    assert.equal(parsed.readings.length, 1);
+  });
+});

@@ -36,6 +36,8 @@ export interface PublicScan {
   resolution_note: string | null;
   refinement_count: number;
   image_count: number;
+  evidence_count: number;
+  reading_count: number;
   category: string | null;
   description: string | null;
   model_id: string;
@@ -53,6 +55,8 @@ export function toPublicScan(scan: StoredScan): PublicScan {
     resolution_note: scan.resolution_note,
     refinement_count: scan.refinement_count,
     image_count: scan.request.images.length,
+    evidence_count: scan.request.evidence.length,
+    reading_count: scan.request.readings.length,
     category: scan.request.category ?? null,
     description: scan.request.description ?? null,
     model_id: scan.metadata.model_id,

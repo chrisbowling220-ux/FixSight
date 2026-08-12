@@ -63,12 +63,11 @@ export default function CaptureScreen() {
     }
     try {
       setTaking(true);
-      const photo = await cameraRef.current.takePictureAsync({
-        base64: true,
-        quality: 0.85,
-      });
+      // No base64 here — the full-resolution string would be several megabytes
+      // held in JS memory. images.ts downscales first and encodes after.
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
       if (photo) {
-        addImages([fromCameraPicture(photo)]);
+        addImages([await fromCameraPicture(photo)]);
       }
     } catch (err) {
       Alert.alert(
@@ -89,13 +88,11 @@ export default function CaptureScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: "images",
       allowsMultipleSelection: true,
-      base64: true,
-      quality: 0.85,
       selectionLimit: remaining,
     });
     if (result.canceled) return;
     try {
-      const selected = result.assets.map(fromPickerAsset);
+      const selected = await Promise.all(result.assets.map(fromPickerAsset));
       addImages(selected);
     } catch (err) {
       Alert.alert(

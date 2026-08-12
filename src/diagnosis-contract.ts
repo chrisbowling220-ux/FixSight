@@ -25,6 +25,28 @@ export const FollowUpQuestionSchema = z
   })
   .strict();
 
+export const INSTRUMENTS = [
+  "moisture_meter",
+  "thermal_camera",
+  "borescope",
+  "wall_scanner",
+  "hygrometer",
+] as const;
+
+export const NextMeasurementSchema = z
+  .object({
+    instrument: z.enum(INSTRUMENTS),
+    target: nonEmptyText(300),
+    why: nonEmptyText(500),
+    // The field that makes the loop converge. The model must commit to how it
+    // will read a result *before* seeing it; without that it can rationalize any
+    // reading into the hypothesis it already holds, and the extra measurement
+    // buys nothing.
+    expected_discriminator: nonEmptyText(500),
+    safety_note: nonEmptyText(300).nullable(),
+  })
+  .strict();
+
 export const RecommendationSchema = z
   .object({
     best_fix: nonEmptyText(2_000),
@@ -49,6 +71,7 @@ export const DiagnosisSchema = z
     professional_type: z.enum(PROFESSIONAL_TYPES).nullable(),
     safety_warnings: z.array(nonEmptyText(500)).max(10),
     disclaimer_required: z.boolean(),
+    next_measurement: NextMeasurementSchema.nullable(),
   })
   .strict();
 
@@ -126,6 +149,29 @@ export const AnalysisSchema = BaseAnalysisSchema.superRefine((analysis, context)
       "retake_guidance",
     ]);
   }
+
+  const diagnosis = analysis.diagnosis;
+  if (diagnosis) {
+    // Low confidence with no proposed way to resolve it is the exact failure
+    // this field exists to fix, so it is required rather than encouraged.
+    if (diagnosis.confidence < 0.7 && diagnosis.next_measurement === null) {
+      issue(
+        "A diagnosis below 0.70 confidence must propose a next measurement.",
+        ["diagnosis", "next_measurement"],
+      );
+    }
+    // Every reason to scan a wall is a prelude to making a hole in it.
+    if (
+      diagnosis.next_measurement?.instrument === "wall_scanner" &&
+      diagnosis.next_measurement.safety_note === null
+    ) {
+      issue("A wall-scanner measurement must carry a safety note.", [
+        "diagnosis",
+        "next_measurement",
+        "safety_note",
+      ]);
+    }
+  }
 });
 
 export type FollowUpQuestion = z.infer<typeof FollowUpQuestionSchema>;
@@ -134,6 +180,48 @@ export type Analysis = z.infer<typeof AnalysisSchema>;
 
 export function parseAnalysis(value: unknown): Analysis {
   return AnalysisSchema.parse(value);
+}
+
+/**
+ * Clears the arrays a given `result_type` forbids before strict validation.
+ *
+ * The model occasionally returns a complete diagnosis while still echoing the
+ * follow-up questions the user just answered. Those questions carry no
+ * information the client would ever render, but the cross-field rules treat the
+ * combination as fatal — so a finished diagnosis was being thrown away right
+ * after the user did the work of answering. Dropping the forbidden array keeps
+ * the answer; every substantive rule (required fields, enums, ranges, and the
+ * diagnosis/questions presence checks) still runs afterwards in `parseAnalysis`.
+ */
+export function normalizeAnalysis(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const analysis = { ...(value as Record<string, unknown>) };
+
+  switch (analysis.result_type) {
+    case "diagnosis":
+      analysis.follow_up_questions = [];
+      analysis.retake_guidance = [];
+      break;
+    case "questions":
+      analysis.retake_guidance = [];
+      analysis.diagnosis = null;
+      break;
+    case "retake":
+      analysis.follow_up_questions = [];
+      analysis.diagnosis = null;
+      break;
+    case "cannot_assess":
+      analysis.follow_up_questions = [];
+      analysis.retake_guidance = [];
+      analysis.diagnosis = null;
+      break;
+    default:
+      break;
+  }
+
+  return analysis;
 }
 
 const SAFETY_OVERRIDES: Partial<
@@ -178,6 +266,11 @@ export function applySafetyRules(analysis: Analysis): Analysis {
         difficulty: "pro-only",
       },
       safety_warnings: safetyWarnings,
+      // Sending someone to take a reading at a spot this response just declared
+      // hazardous is a direct contradiction, and the safety override wins. This
+      // runs after parseAnalysis, so clearing it cannot trip the low-confidence
+      // rule that required it.
+      next_measurement: null,
     },
   };
 }
@@ -188,4 +281,83 @@ const generatedJsonSchema = z.toJSONSchema(BaseAnalysisSchema, {
 
 // The API accepts the schema body but does not need the draft declaration.
 const { $schema: _draft, ...analysisJsonSchema } = generatedJsonSchema;
-export const ANALYSIS_JSON_SCHEMA = analysisJsonSchema;
+
+type JsonSchemaNode = Record<string, unknown>;
+
+// Structured outputs support only a subset of JSON Schema. Length, numeric-range
+// and item-count constraints are rejected outright — the API answers 400
+// ("For 'array' type, property 'maxItems' is not supported") and every scan fails.
+// Zod emits them from .min()/.max(), so strip them here.
+const UNSUPPORTED_KEYWORDS = new Set([
+  "minLength",
+  "maxLength",
+  "pattern",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "minProperties",
+  "maxProperties",
+]);
+
+// Values of these keywords are name -> schema maps, so their keys are property
+// names rather than schema keywords and must not be filtered.
+const SCHEMA_MAPS = new Set([
+  "properties",
+  "$defs",
+  "definitions",
+  "patternProperties",
+]);
+
+/**
+ * Rewrites a Zod-generated schema into the subset the Messages API accepts.
+ * Each dropped constraint is restated in `description` so the model still sees
+ * the bound; Zod stays the real enforcer, since `parseAnalysis` rejects any
+ * response that violates the original constraints.
+ */
+function toStructuredOutputSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(toStructuredOutputSchema);
+  if (node === null || typeof node !== "object") return node;
+
+  const source = node as JsonSchemaNode;
+  const result: JsonSchemaNode = {};
+  const dropped: string[] = [];
+
+  for (const [key, value] of Object.entries(source)) {
+    if (UNSUPPORTED_KEYWORDS.has(key)) {
+      dropped.push(`${key} ${JSON.stringify(value)}`);
+      continue;
+    }
+    if (
+      SCHEMA_MAPS.has(key) &&
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      result[key] = Object.fromEntries(
+        Object.entries(value as JsonSchemaNode).map(([name, child]) => [
+          name,
+          toStructuredOutputSchema(child),
+        ]),
+      );
+      continue;
+    }
+    result[key] = toStructuredOutputSchema(value);
+  }
+
+  if (dropped.length > 0) {
+    const existing =
+      typeof result.description === "string" ? `${result.description} ` : "";
+    result.description = `${existing}Must satisfy: ${dropped.join(", ")}.`;
+  }
+
+  return result;
+}
+
+export const ANALYSIS_JSON_SCHEMA = toStructuredOutputSchema(
+  analysisJsonSchema,
+) as JsonSchemaNode;

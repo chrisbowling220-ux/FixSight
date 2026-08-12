@@ -56,7 +56,10 @@ function copy(scan: StoredScan): StoredScan {
 }
 
 function requestImageBytes(request: AnalyzeRequest): number {
-  return request.images.reduce(
+  // Evidence images are retained alongside the visible ones, so they count
+  // against the same byte budget — omitting them would let the repository hold
+  // roughly twice what its limit claims.
+  return [...request.images, ...request.evidence].reduce(
     (total, image) => total + Buffer.byteLength(image.data, "base64"),
     0,
   );

@@ -4,6 +4,7 @@ import type { AppConfig } from "./config.js";
 import {
   ANALYSIS_JSON_SCHEMA,
   applySafetyRules,
+  normalizeAnalysis,
   parseAnalysis,
   type Analysis,
 } from "./diagnosis-contract.js";
@@ -13,7 +14,7 @@ import {
 } from "./errors.js";
 import { prepareImages } from "./image-processing.js";
 import { PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
-import type { AnalyzeRequest } from "./request-schema.js";
+import type { AnalyzeRequest, EvidenceInput } from "./request-schema.js";
 
 export interface AnalysisMetadata {
   model_id: string;
@@ -33,10 +34,29 @@ export interface DiagnosisEngine {
   analyze(request: AnalyzeRequest): Promise<AnalysisResult>;
 }
 
+const EVIDENCE_LABELS: Record<EvidenceInput["kind"], string> = {
+  thermal:
+    "Thermal (infrared) image. It shows apparent surface temperature only, is not calibrated, and does not show moisture or anything behind the surface.",
+  cavity:
+    "Borescope photograph taken inside a wall, ceiling, or floor cavity. It shows only what the scope was pointed at.",
+};
+
+/**
+ * Labels an evidence image so the model knows what channel it is looking at.
+ *
+ * An unlabeled thermal frame is worse than no thermal frame: it reads as a
+ * bizarre visible photo, and the model will try to diagnose the false colour.
+ */
+function evidenceLabel(evidence: EvidenceInput, index: number): string {
+  const where = evidence.location ? ` Location: ${evidence.location}.` : "";
+  return `Evidence image ${index + 1}. ${EVIDENCE_LABELS[evidence.kind]}${where}`;
+}
+
 function contextText(request: AnalyzeRequest): string {
   const context = {
     category: request.category ?? null,
     description: request.description ?? null,
+    instrument_readings: request.readings,
     follow_up_answers: request.answers,
     answers_already_provided: request.answers.length > 0,
   };
@@ -91,17 +111,34 @@ export class AnthropicDiagnosisEngine implements DiagnosisEngine {
   }
 
   async analyze(request: AnalyzeRequest): Promise<AnalysisResult> {
+    const imageBlock = (image: {
+      data: string;
+      media_type: "image/jpeg" | "image/png" | "image/webp";
+    }): Anthropic.Messages.ImageBlockParam => ({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: image.media_type,
+        data: image.data,
+      },
+    });
+
     const images = await prepareImages(request.images);
+    const evidence = await prepareImages(
+      request.evidence.map(({ data, media_type }) => ({ data, media_type })),
+    );
+
     const content: Anthropic.Messages.ContentBlockParam[] = [
-      ...images.map(
-        (image): Anthropic.Messages.ImageBlockParam => ({
-          type: "image",
-          source: {
-            type: "base64",
-            media_type: image.media_type,
-            data: image.data,
+      ...images.map(imageBlock),
+      // Each label precedes its image so the model reads the channel first.
+      ...evidence.flatMap(
+        (prepared, index): Anthropic.Messages.ContentBlockParam[] => [
+          {
+            type: "text",
+            text: evidenceLabel(request.evidence[index]!, index),
           },
-        }),
+          imageBlock(prepared),
+        ],
       ),
       { type: "text", text: contextText(request) },
     ];
@@ -161,7 +198,9 @@ export class AnthropicDiagnosisEngine implements DiagnosisEngine {
 
     let analysis: Analysis;
     try {
-      analysis = applySafetyRules(parseAnalysis(parsedJson));
+      analysis = applySafetyRules(
+        parseAnalysis(normalizeAnalysis(parsedJson)),
+      );
     } catch (error) {
       throw new ProviderResponseError(
         "The analysis provider returned data outside the diagnosis contract.",

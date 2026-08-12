@@ -4,7 +4,7 @@ Point your phone at a problem, get a first-level expert diagnosis: likely issue,
 severity, repair options, DIY-vs-pro call, and a shareable repair summary.
 
 **How it works:** a small Express server serves a mobile-first web app and proxies photo scans to
-the Claude vision API (`claude-opus-4-8`) with a structured-output schema, so every response is a
+the Claude vision API (`claude-opus-5`) with a structured-output schema, so every response is a
 guaranteed-valid diagnosis JSON. The model may ask up to 3 follow-up questions before diagnosing.
 
 ## Run it

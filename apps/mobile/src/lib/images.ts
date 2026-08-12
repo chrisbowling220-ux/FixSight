@@ -1,6 +1,15 @@
 import type { CameraCapturedPicture } from "expo-camera";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import type { ImagePickerAsset } from "expo-image-picker";
 import type { MediaType } from "./contract";
+
+// Mirrors MAX_LONG_EDGE in the server's image-processing.ts. The server resizes
+// as well, but only after the whole photo has crossed the wire: a current phone
+// camera produces 8-12 MB, which is slow to upload on cellular and large enough
+// to have been rejected by request validation. Downscaling here costs no detail
+// the model can use, since the server would discard those pixels anyway.
+const MAX_LONG_EDGE = 2_576;
+const JPEG_QUALITY = 0.85;
 
 export interface SelectedImage {
   id: string;
@@ -17,30 +26,63 @@ function rawBase64(value: string): string {
   return value.replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "");
 }
 
-function supportedMediaType(value: string | null | undefined): MediaType {
-  if (value === "image/png" || value === "image/webp" || value === "image/jpeg") {
-    return value;
+/**
+ * Downscales to the server's working resolution and re-encodes as JPEG.
+ *
+ * Always rendering through the manipulator — even when the photo is already
+ * small enough — normalizes HEIC and other library formats the API does not
+ * accept, so every scan sends a plain JPEG.
+ */
+async function toJpegBase64(
+  uri: string,
+  width: number,
+  height: number,
+): Promise<{ uri: string; data: string }> {
+  const context = ImageManipulator.manipulate(uri);
+
+  // Constraining one edge and leaving the other null preserves the aspect ratio.
+  const longEdge = Math.max(width, height);
+  if (Number.isFinite(longEdge) && longEdge > MAX_LONG_EDGE) {
+    context.resize(
+      width >= height
+        ? { width: MAX_LONG_EDGE, height: null }
+        : { width: null, height: MAX_LONG_EDGE },
+    );
   }
-  if (!value || value === "image/jpg") return "image/jpeg";
-  throw new Error("FixSight supports JPEG, PNG, and WebP photos.");
+
+  const rendered = await context.renderAsync();
+  const result = await rendered.saveAsync({
+    format: SaveFormat.JPEG,
+    compress: JPEG_QUALITY,
+    base64: true,
+  });
+
+  if (!result.base64) {
+    throw new Error("The photo could not be prepared for analysis. Try again.");
+  }
+  return { uri: result.uri, data: rawBase64(result.base64) };
 }
 
-export function fromCameraPicture(photo: CameraCapturedPicture): SelectedImage {
-  if (!photo.base64) throw new Error("The camera did not return photo data. Try again.");
+export async function fromCameraPicture(
+  photo: CameraCapturedPicture,
+): Promise<SelectedImage> {
+  const prepared = await toJpegBase64(photo.uri, photo.width, photo.height);
   return {
     id: id(),
-    uri: photo.uri,
-    data: rawBase64(photo.base64),
+    uri: prepared.uri,
+    data: prepared.data,
     mediaType: "image/jpeg",
   };
 }
 
-export function fromPickerAsset(asset: ImagePickerAsset): SelectedImage {
-  if (!asset.base64) throw new Error("The selected photo could not be read. Try another.");
+export async function fromPickerAsset(
+  asset: ImagePickerAsset,
+): Promise<SelectedImage> {
+  const prepared = await toJpegBase64(asset.uri, asset.width, asset.height);
   return {
     id: id(),
-    uri: asset.uri,
-    data: rawBase64(asset.base64),
-    mediaType: supportedMediaType(asset.mimeType),
+    uri: prepared.uri,
+    data: prepared.data,
+    mediaType: "image/jpeg",
   };
 }

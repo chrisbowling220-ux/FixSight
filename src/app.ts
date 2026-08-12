@@ -20,6 +20,7 @@ import { PROMPT_VERSION } from "./prompt.js";
 import { parseAnalyzeRequest } from "./request-schema.js";
 import { createDevUserIdResolver } from "./auth.js";
 import { createScanRouter, InMemoryScanRepository } from "./scans/index.js";
+import { createVoiceRouter, createVoiceService } from "./voice/index.js";
 
 interface RequestWithId extends Request {
   requestId?: string;
@@ -167,6 +168,9 @@ export function createApp({
         directives: {
           defaultSrc: ["'self'"],
           imgSrc: ["'self'", "data:", "blob:"],
+          // blob: lets the browser play the streamed read-aloud audio the voice
+          // endpoint returns (Feature B); without it playback fails silently.
+          mediaSrc: ["'self'", "blob:"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           connectSrc: ["'self'"],
@@ -179,7 +183,8 @@ export function createApp({
     }),
   );
   app.use((_request, response, next) => {
-    response.setHeader("permissions-policy", "camera=(self)");
+    // microphone=(self) lets the web client open the mic for voice input.
+    response.setHeader("permissions-policy", "camera=(self), microphone=(self)");
     next();
   });
   app.use(express.json({ limit: "60mb", type: "application/json" }));
@@ -210,8 +215,13 @@ export function createApp({
   const currentUserId = createDevUserIdResolver();
   const scanRouter = createScanRouter({ engine, repository, currentUserId });
 
+  // The voice router applies `limiter` itself, but only to its paid POST routes
+  // — `/api/voice/status` is a cheap poll and stays unmetered.
+  const voiceRouter = createVoiceRouter(createVoiceService(config.voice), limiter);
+
   app.post("/api/analyze", limiter, analyze);
   app.use("/api/v1/scans", limiter, scanRouter);
+  app.use("/api/voice", voiceRouter);
 
   app.use(express.static(publicDir, { index: "index.html", maxAge: 0 }));
 

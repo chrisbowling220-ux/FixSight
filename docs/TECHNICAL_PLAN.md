@@ -23,10 +23,10 @@ first step toward it:
 | Image resize | server-side toward 2576px | **client-side to 1568px** before upload |
 | Follow-up loop | up to ~2 rounds | **1 round** (model asks ≤3 questions, then commits) |
 | Schema | §4.2 shape (`subject`, `image_quality`, `confidence` 0–1, …) | equivalent but flatter shape in `server.js` (`result_type`, `severity_score` 1–10, `confidence` low/med/high, `share_summary`) — see §4.2 note |
-| Model / SDK | `claude-opus-4-8`, official `@anthropic-ai/sdk` | ✅ same — this carried over exactly |
+| Model / SDK | `claude-opus-5`, official `@anthropic-ai/sdk` | ✅ same — this carried over exactly |
 
 **What carried over unchanged and is proven:** the thin-backend-holds-the-key rule, the
-official SDK, `claude-opus-4-8` with adaptive thinking + structured outputs, the
+official SDK, `claude-opus-5` with adaptive thinking + structured outputs, the
 confidence + "get a pro" trust spine, and the safety bias for electrical/gas/structural.
 Everything below is the roadmap for turning the prototype into the production app;
 Phase 0 (§9) is effectively **done** — the prototype *is* the proof of the engine.
@@ -95,12 +95,12 @@ Everything else is plumbing. This is the product.
 
 ### 4.1 Model choice
 
-**Default: `claude-opus-4-8`.**
+**Default: `claude-opus-5`.**
 - First-class **high-resolution vision** (up to 2576px on the long edge) — critical for spotting cracks, seal failure, stains, corrosion, hairline damage. Coordinates map 1:1 to pixels if we ever draw callouts on the image.
 - Strong at the visual self-verification this task needs (looking carefully, then reasoning about cause).
 - **Adaptive thinking** so it reasons before committing to a diagnosis: `thinking: { type: "adaptive" }`, `output_config: { effort: "high" }`.
 
-**Cost-optimized alternative for scale: `claude-sonnet-5`.** Also has high-res vision (2576px) at roughly half the price. Plan: build on Opus 4.8 for quality during v1, keep the model ID a single config value, and A/B Sonnet 5 once we have real accuracy data. **Never downgrade silently** — it's a measured decision, not a default.
+**Cost-optimized alternative for scale: `claude-sonnet-5`.** Also has high-res vision (2576px) at roughly half the price. Plan: build on Opus 5 for quality during v1, keep the model ID a single config value, and A/B Sonnet 5 once we have real accuracy data. **Never downgrade silently** — it's a measured decision, not a default.
 
 ### 4.2 Structured output — the diagnosis schema
 
@@ -275,9 +275,9 @@ Thermal mode, in-wall mode, more use cases, maintenance reminders, cost-range es
 
 ## 11. Cost model (rough, per scan)
 
-Assuming Opus 4.8, one high-res image (~1.5k–4.8k image tokens) + ~1k prompt + ~0.8k output:
+Assuming Opus 5, one high-res image (~1.5k–4.8k image tokens) + ~1k prompt + ~0.8k output:
 
-- **~$0.03–0.05 per single-call scan** on Opus 4.8.
+- **~$0.03–0.05 per single-call scan** on Opus 5.
 - **~$0.015–0.025** on Sonnet 5 (its intro pricing is lower still through 2026-08-31).
 - The follow-up loop roughly doubles a scan's cost (second call), but **prompt caching** on the large system prompt cuts the input side of every call by ~90% after the first, so real steady-state cost is lower than the naïve figure.
 
