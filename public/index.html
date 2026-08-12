@@ -63,7 +63,11 @@
 
       <div class="field">
         <div class="field-label">Anything you've noticed? <span class="muted">(optional)</span></div>
-        <textarea id="description" rows="2" placeholder="e.g. It appeared after last week's storm, gets worse when it rains…"></textarea>
+        <div class="input-with-mic">
+          <textarea id="description" rows="2" placeholder="e.g. It appeared after last week's storm, gets worse when it rains…"></textarea>
+          <button type="button" id="mic-btn" class="mic-btn" hidden aria-label="Dictate — tap to record">🎤</button>
+        </div>
+        <div id="mic-status" class="mic-status" hidden></div>
       </div>
 
       <button id="analyze-btn" class="primary-btn" disabled>Scan it</button>

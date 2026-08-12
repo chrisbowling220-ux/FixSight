@@ -684,3 +684,160 @@ function escapeHtml(s) {
 }
 
 renderHistory();
+
+// ---------- voice input (Feature A) ----------
+// Dictate into the "Anything you've noticed?" field. The transcript fills the
+// textarea for review and editing — it never triggers the scan itself. Same
+// "review before action" rule the rest of the app follows.
+(function initVoice() {
+  const micBtn = $("mic-btn");
+  const micStatus = $("mic-status");
+  const textarea = $("description");
+  if (!micBtn || !textarea) return;
+
+  const supported =
+    typeof MediaRecorder !== "undefined" &&
+    navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === "function";
+  if (!supported) return;
+
+  const MAX_MS = 60_000; // matches the server-side clip ceiling
+  let recorder = null;
+  let chunks = [];
+  let stream = null;
+  let startedAt = 0;
+  let recording = false;
+  let autoStop = null;
+
+  function setStatus(msg, isError) {
+    if (!msg) {
+      micStatus.hidden = true;
+      micStatus.textContent = "";
+      micStatus.classList.remove("error");
+      return;
+    }
+    micStatus.hidden = false;
+    micStatus.textContent = msg;
+    micStatus.classList.toggle("error", Boolean(isError));
+  }
+
+  // Only reveal the mic once the server confirms voice is actually configured.
+  fetch("/api/voice/status")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((s) => {
+      if (s && s.available) micBtn.hidden = false;
+    })
+    .catch(() => {
+      /* leave the mic hidden if we can't confirm */
+    });
+
+  function pickMimeType() {
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+    for (const t of types) {
+      if (MediaRecorder.isTypeSupported(t)) return t;
+    }
+    return "";
+  }
+
+  async function start() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setStatus("Microphone access was blocked. Check your browser's site settings.", true);
+      return;
+    }
+    chunks = [];
+    const mimeType = pickMimeType();
+    recorder = mimeType
+      ? new MediaRecorder(stream, { mimeType })
+      : new MediaRecorder(stream);
+    recorder.addEventListener("dataavailable", (e) => {
+      if (e.data && e.data.size) chunks.push(e.data);
+    });
+    recorder.addEventListener("stop", handleStop);
+    recorder.start();
+    startedAt = Date.now();
+    recording = true;
+    micBtn.classList.add("recording");
+    micBtn.setAttribute("aria-label", "Stop recording");
+    setStatus("Listening… tap the mic again to stop.");
+    autoStop = setTimeout(stop, MAX_MS);
+  }
+
+  function stop() {
+    if (!recording) return;
+    recording = false;
+    clearTimeout(autoStop);
+    micBtn.classList.remove("recording");
+    micBtn.setAttribute("aria-label", "Dictate — tap to record");
+    try {
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  async function handleStop() {
+    const durationMs = Date.now() - startedAt;
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      stream = null;
+    }
+    const type = recorder && recorder.mimeType ? recorder.mimeType : "audio/webm";
+    const blob = new Blob(chunks, { type });
+    chunks = [];
+    if (!blob.size) {
+      setStatus("Didn't catch anything — try again.", true);
+      return;
+    }
+
+    setStatus("Transcribing…");
+    micBtn.disabled = true;
+    try {
+      const audio = await blobToDataUrl(blob);
+      const res = await fetch("/api/voice/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio, mimeType: blob.type, durationMs }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setStatus(data.error || "Couldn't transcribe that. Try again.", true);
+        return;
+      }
+      const transcript = (data.transcript || "").trim();
+      if (!transcript) {
+        setStatus("Didn't catch any words — try again.", true);
+        return;
+      }
+      insertTranscript(transcript);
+      setStatus("");
+      textarea.focus();
+    } catch {
+      setStatus("Couldn't reach the server to transcribe. Try again.", true);
+    } finally {
+      micBtn.disabled = false;
+    }
+  }
+
+  function insertTranscript(text) {
+    const existing = textarea.value.trim();
+    textarea.value = existing ? `${existing} ${text}` : text;
+    // keep app state in sync so a straight-to-scan tap picks up the dictation
+    state.description = textarea.value.trim();
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  micBtn.addEventListener("click", () => {
+    if (recording) stop();
+    else start();
+  });
+})();

@@ -177,8 +177,13 @@ function answerRequest(body: unknown, scan: StoredScan): AnalyzeRequest {
     };
   });
 
+  // Every stored input must be replayed here. Dropping evidence or readings
+  // would silently discard the instrument data on the second call — the same
+  // shape of bug as losing a finished diagnosis to a stale cross-field rule.
   return parseAnalyzeRequest({
     images: scan.request.images,
+    evidence: scan.request.evidence,
+    readings: scan.request.readings,
     ...(scan.request.category !== undefined
       ? { category: scan.request.category }
       : {}),
