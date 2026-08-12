@@ -136,6 +136,7 @@ const CanonicalAnalyzeRequestSchema = z
     category: z.string().trim().min(1).max(100).optional(),
     description: z.string().trim().max(2_000).optional(),
     answers: z.array(AnswerSchema).max(3).default([]),
+    vision_mode: z.enum(["thermal", "cold", "wet", "xray"]).optional(),
   })
   .strict()
   .superRefine((request, context) => {
@@ -195,6 +196,7 @@ function normalizeLegacyRequest(
   };
   if ("category" in value) normalized.category = value.category;
   if ("description" in value) normalized.description = value.description;
+  if ("vision_mode" in value) normalized.vision_mode = value.vision_mode;
   return normalized;
 }
 

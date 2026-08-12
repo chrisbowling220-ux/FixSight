@@ -8,7 +8,10 @@ const state = {
   category: null,
   description: "",
   questions: [],      // follow-up questions from the model
-  result: null
+  result: null,
+  visionMode: null,     // null | "thermal" | "cold" | "wet" | "xray"
+  filteredImage: null,  // base64 (no prefix) of processed image for API
+  filteredThumb: null,  // data URL of processed thumbnail for UI
 };
 
 const $ = (id) => document.getElementById(id);
@@ -17,6 +20,141 @@ const screens = ["screen-capture", "screen-loading", "screen-questions", "screen
 function show(screenId) {
   for (const id of screens) $(id).hidden = id !== screenId;
   window.scrollTo(0, 0);
+}
+
+// ---------- vision mode filters ----------
+const FILTER_LABELS = {
+  thermal: "Thermal — heat distribution",
+  cold: "Cold — infiltration & cold spots",
+  wet: "Wet — moisture detection",
+  xray: "X-Ray — edges & structure",
+};
+
+function applyFilterPixels(imageData, mode) {
+  const d = imageData.data;
+  const w = imageData.width;
+  const h = imageData.height;
+
+  if (mode === "thermal") {
+    // Remap luminance to blue→cyan→green→yellow→red palette
+    for (let i = 0; i < d.length; i += 4) {
+      const t = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+      let r, g, b;
+      if (t < 0.25) { r = 0; g = Math.round(t * 4 * 255); b = 255; }
+      else if (t < 0.5) { r = 0; g = 255; b = Math.round((1 - (t - 0.25) * 4) * 255); }
+      else if (t < 0.75) { r = Math.round((t - 0.5) * 4 * 255); g = 255; b = 0; }
+      else { r = 255; g = Math.round((1 - (t - 0.75) * 4) * 255); b = 0; }
+      d[i] = r; d[i + 1] = g; d[i + 2] = b;
+    }
+  } else if (mode === "cold") {
+    // Shift dark/shadowed areas toward blue/cyan to surface cold spots
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      const f = Math.max(0, 1 - lum / 128);
+      d[i] = Math.max(0, d[i] - Math.round(f * 60));
+      d[i + 1] = Math.max(0, d[i + 1] - Math.round(f * 20));
+      d[i + 2] = Math.min(255, d[i + 2] + Math.round(f * 100));
+    }
+  } else if (mode === "wet") {
+    // Boost contrast and tint dark regions teal-green to highlight moisture
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      const f = Math.max(0, 1 - lum / 150);
+      // contrast boost
+      d[i]     = Math.min(255, Math.max(0, Math.round((d[i]     - 128) * 1.3 + 128)));
+      d[i + 1] = Math.min(255, Math.max(0, Math.round((d[i + 1] - 128) * 1.3 + 128)));
+      d[i + 2] = Math.min(255, Math.max(0, Math.round((d[i + 2] - 128) * 1.3 + 128)));
+      // teal-green tint on dark areas
+      d[i]     = Math.max(0,   d[i]     - Math.round(f * 40));
+      d[i + 1] = Math.min(255, d[i + 1] + Math.round(f * 30));
+      d[i + 2] = Math.min(255, d[i + 2] + Math.round(f * 20));
+    }
+  } else if (mode === "xray") {
+    // Sobel edge detection — bright edges on dark background
+    const gray = new Float32Array(w * h);
+    for (let i = 0; i < d.length; i += 4) {
+      gray[i / 4] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+    const Gx = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+    const Gy = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let gx = 0, gy = 0;
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const val = gray[Math.min(h - 1, Math.max(0, y + ky)) * w + Math.min(w - 1, Math.max(0, x + kx))];
+            const ki = (ky + 1) * 3 + (kx + 1);
+            gx += Gx[ki] * val;
+            gy += Gy[ki] * val;
+          }
+        }
+        const mag = Math.min(255, Math.sqrt(gx * gx + gy * gy));
+        const idx = (y * w + x) * 4;
+        d[idx] = d[idx + 1] = d[idx + 2] = mag;
+      }
+    }
+  }
+
+  imageData.data.set(d);
+}
+
+// Loads the stored full-size JPEG (base64), draws it onto a canvas at maxDim,
+// applies the filter, and returns a data URL.
+function renderFilteredDataUrl(mode, maxDim, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, w, h);
+      const imageData = ctx.getImageData(0, 0, w, h);
+      applyFilterPixels(imageData, mode);
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = reject;
+    img.src = "data:image/jpeg;base64," + state.image;
+  });
+}
+
+async function selectMode(mode) {
+  state.visionMode = mode || null;
+  state.filteredImage = null;
+  state.filteredThumb = null;
+
+  // Sync chip highlight — Standard chip has data-mode=""
+  document.querySelectorAll("#mode-chips .chip").forEach((c) => {
+    c.classList.toggle("selected", c.dataset.mode === (mode || ""));
+  });
+
+  const previewWrap = $("mode-preview-wrap");
+  previewWrap.hidden = true;
+
+  if (!mode) return;
+
+  try {
+    // Thumbnail (320px) for the UI preview — fast
+    const thumbDataUrl = await renderFilteredDataUrl(mode, 320, 0.80);
+    state.filteredThumb = thumbDataUrl;
+    $("mode-preview-label").textContent = FILTER_LABELS[mode] || mode;
+    $("mode-preview-img").src = thumbDataUrl;
+    previewWrap.hidden = false;
+
+    // Full image for the API (capped at 900px to keep Sobel fast; backend
+    // will further resize toward the 2576px long-edge ceiling anyway)
+    const fullDataUrl = await renderFilteredDataUrl(mode, 900, 0.88);
+    state.filteredImage = fullDataUrl.split(",")[1];
+  } catch {
+    // Filter failed — fall back silently to unenhanced scan
+    state.visionMode = null;
+    state.filteredImage = null;
+    state.filteredThumb = null;
+  }
 }
 
 // ---------- photo selection & resize ----------
@@ -32,6 +170,9 @@ $("photo-input").addEventListener("change", async (e) => {
     $("photo-preview").hidden = false;
     $("photo-placeholder").hidden = true;
     $("analyze-btn").disabled = false;
+    $("vision-section").hidden = false;
+    // reset to standard mode when new photo loaded
+    selectMode(null);
   } catch {
     alert("Couldn't read that image — try another photo.");
   }
@@ -63,12 +204,25 @@ $("category-chips").addEventListener("click", (e) => {
   const chip = e.target.closest(".chip");
   if (!chip) return;
   const wasSelected = chip.classList.contains("selected");
-  document.querySelectorAll(".chip").forEach((c) => c.classList.remove("selected"));
+  document.querySelectorAll("#category-chips .chip").forEach((c) => c.classList.remove("selected"));
   if (!wasSelected) {
     chip.classList.add("selected");
     state.category = chip.dataset.cat;
   } else {
     state.category = null;
+  }
+});
+
+// ---------- vision mode chips ----------
+$("mode-chips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  const mode = chip.dataset.mode || null;
+  // clicking the already-active non-standard chip toggles it off
+  if (mode && mode === state.visionMode) {
+    selectMode(null);
+  } else {
+    selectMode(mode);
   }
 });
 
@@ -97,18 +251,24 @@ function stopLoader() { clearInterval(loaderTimer); }
 async function analyze(answers) {
   startLoader();
   try {
+    // When a vision mode is active, send the original image first, then the
+    // processed image as the second — matching what the system prompt expects.
+    const images = [{ data: state.image, media_type: state.mediaType || "image/jpeg" }];
+    if (state.visionMode && state.filteredImage) {
+      images.push({ data: state.filteredImage, media_type: "image/jpeg" });
+    }
+    const body = {
+      images,
+      category: state.category,
+      description: state.description,
+      answers: answers || [],
+    };
+    if (state.visionMode) body.vision_mode = state.visionMode;
+
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        images: [{
-          data: state.image,
-          media_type: state.mediaType || "image/jpeg"
-        }],
-        category: state.category,
-        description: state.description,
-        answers: answers || []
-      })
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     stopLoader();
@@ -493,12 +653,21 @@ $("clear-history").addEventListener("click", () => {
 // ---------- navigation ----------
 function resetToHome() {
   state.image = null;
+  state.mediaType = null;
   state.thumb = null;
   state.questions = [];
   state.result = null;
+  state.visionMode = null;
+  state.filteredImage = null;
+  state.filteredThumb = null;
   $("photo-input").value = "";
   $("photo-preview").hidden = true;
   $("photo-placeholder").hidden = false;
+  $("vision-section").hidden = true;
+  $("mode-preview-wrap").hidden = true;
+  document.querySelectorAll("#mode-chips .chip").forEach((c) => {
+    c.classList.toggle("selected", c.dataset.mode === "");
+  });
   $("analyze-btn").disabled = true;
   renderHistory();
   show("screen-capture");
