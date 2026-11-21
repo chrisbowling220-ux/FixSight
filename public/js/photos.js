@@ -144,6 +144,37 @@ export async function photoFromFile(file) {
   }
 }
 
+// ---------- request size budget ----------
+
+// Vercel Functions reject request bodies over 4.5 MB (413
+// FUNCTION_PAYLOAD_TOO_LARGE). Photos travel as base64 inside JSON, so all
+// photos together must stay under this many characters, leaving headroom for
+// the description, readings, and answers.
+export const PHOTO_PAYLOAD_BUDGET = 3_800_000;
+const SHRINK_STEPS = [[1600, 0.8], [1280, 0.75], [1024, 0.7], [800, 0.65]];
+
+export function payloadSize(photos) {
+  return photos.reduce((total, photo) => total + photo.dataUrl.length, 0);
+}
+
+/**
+ * Returns photos that fit the request budget. Usually the stored photos as-is;
+ * otherwise copies re-encoded smaller for this request only (stored photos and
+ * reports keep full quality). Each step re-encodes from the stored original.
+ */
+export async function fitPhotosToBudget(photos, budget = PHOTO_PAYLOAD_BUDGET) {
+  if (payloadSize(photos) <= budget) return photos;
+  const images = await Promise.all(photos.map((photo) => loadImage(photo.dataUrl)));
+  for (const [edge, quality] of SHRINK_STEPS) {
+    const resized = photos.map((photo, index) => ({
+      ...photo,
+      dataUrl: scaledCanvas(images[index], edge).toDataURL("image/jpeg", quality),
+    }));
+    if (payloadSize(resized) <= budget) return resized;
+  }
+  throw new Error("These photos are too large to send together. Remove one and try again.");
+}
+
 export async function thumbFromDataUrl(dataUrl) {
   const image = await loadImage(dataUrl);
   return scaledCanvas(image, THUMB_LONG_EDGE).toDataURL("image/jpeg", 0.7);

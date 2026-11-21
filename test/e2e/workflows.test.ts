@@ -544,6 +544,43 @@ const AUDIT_SCRIPT = `(() => {
   return issues;
 })()`;
 
+test("four large photos are shrunk for sending so the request fits the host's 4.5 MB limit", async () => {
+  const sharp = (await import("sharp")).default;
+  const files: string[] = [];
+  for (let index = 0; index < 4; index += 1) {
+    const width = 2400;
+    const height = 1800;
+    const noise = Buffer.alloc(width * height * 3);
+    for (let i = 0; i < noise.length; i += 1) noise[i] = (i * 2654435761 + index * 97) >>> 24;
+    const file = path.join(ARTIFACTS, `noise-${index}.jpg`);
+    await sharp(noise, { raw: { width, height, channels: 3 } }).jpeg({ quality: 92 }).toFile(file);
+    files.push(file);
+  }
+  const session = await open("phone");
+  const { page } = session;
+  const sizes: number[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/analyze")) sizes.push(Buffer.byteLength(request.postData() ?? ""));
+  });
+  for (const file of files) await addPhoto(page, file);
+  await page.fill("#description", "Hairline drywall crack above the door");
+  await page.click("#analyze-btn");
+  await waitForAssessment(page);
+  assert.equal(sizes.length, 1);
+  assert.ok(sizes[0]! < 4_500_000, `request body ${sizes[0]} bytes`);
+  // Stored photos keep their full quality for reports.
+  const stored = await page.evaluate(() => new Promise<number>((resolve) => {
+    const open = indexedDB.open("fixsight");
+    open.onsuccess = () => {
+      const all = open.result.transaction("inspections").objectStore("inspections").getAll();
+      all.onsuccess = () => resolve(all.result[0].photos.reduce((sum: number, photo: { dataUrl: string }) => sum + photo.dataUrl.length, 0));
+    };
+  }));
+  assert.ok(stored > sizes[0]!, "originals are stored larger than what was sent");
+  assertNoErrors(session);
+  await session.context.close();
+});
+
 // 16. Responsive layouts and basic accessibility on phone, tablet, and desktop.
 test("layouts fit phone, tablet, and desktop without sideways scrolling, with labelled controls", async () => {
   for (const device of ["phone", "tablet", "desktop"] as const) {

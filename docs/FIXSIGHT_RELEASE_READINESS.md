@@ -83,6 +83,8 @@ On an iPhone, an iPad, and an Android phone, using the https preview deployment:
 
 ## 7. Deployment (requires approval — nothing here has been run)
 
+> **Superseded by [FIXSIGHT_LAUNCH_PLAN.md](FIXSIGHT_LAUNCH_PLAN.md)**, which has the exact settings for the existing Vercel project and `fixsight.contractor-office.com`. Since this section was written, the branch also gained Vercel-specific fixes: static-page security headers, a 180 s function limit with Fluid compute, and automatic photo shrinking to fit Vercel's 4.5 MB request limit.
+
 1. Push the branch and open a pull request to `main`: `git push -u origin claude/fixsight-release-candidate`. If the Vercel Git integration is on, this creates a **preview deployment**, which may use the project's preview environment variables (including paid keys) — confirm those first.
 2. In Vercel project settings, set for Preview and Production: `ANTHROPIC_API_KEY`, `TRUST_PROXY=true`, `FIXSIGHT_ACCESS_CODE=<chosen code>`, optionally `ANALYSIS_DAILY_CAP`, `RATE_LIMIT_MAX`, `ELEVENLABS_API_KEY`. Do **not** set `FIXSIGHT_DEMO_MODE` in production. Optionally set a preview to demo mode for safe demos.
 3. Set monthly spend limits on the Anthropic and ElevenLabs accounts.

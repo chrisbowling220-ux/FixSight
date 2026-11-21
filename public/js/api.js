@@ -31,6 +31,7 @@ const FRIENDLY = {
   rate_limited: "Too many requests from this connection. Wait a few minutes and try again.",
   provider_rate_limited: "The analysis service is busy. Wait a moment and try again.",
   request_too_large: "The photos are too large to send. Remove one and try again.",
+  http_413: "The photos are too large to send. Remove one and try again.",
   invalid_image: "One of the photos couldn't be read. Try retaking it.",
 };
 

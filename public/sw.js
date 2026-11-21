@@ -1,7 +1,7 @@
 // FixSight service worker: makes the app open offline. Saved inspections live
 // in IndexedDB; this caches only the app's own files. API calls always go to
 // the network and are never cached.
-const VERSION = "fixsight-shell-2026-11-21-2";
+const VERSION = "fixsight-shell-2026-11-21-3";
 const SHELL = [
   "/",
   "/index.html",

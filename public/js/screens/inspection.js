@@ -13,7 +13,7 @@ import {
   renderSafetyNotices,
   severityTone,
 } from "../analysis-view.js";
-import { photoFromFile } from "../photos.js";
+import { fitPhotosToBudget, photoFromFile } from "../photos.js";
 import { buildPdf } from "../report.js";
 import {
   $, $$, addDays, confirmDialog, downloadBlob, formatDate, formatDateTime, html, openModal, raw, setHtml, slugify, toast, uid,
@@ -85,7 +85,9 @@ export async function runAnalysis(ctx, inspectionId, answers = []) {
   inFlight = controller;
   const hide = showLoading(inspection.photos[0].thumb, () => controller.abort());
   try {
-    const analysis = await api.analyze(inspection, answers, controller.signal);
+    // Keep the request under the host's 4.5 MB body limit.
+    const sendable = { ...inspection, photos: await fitPhotosToBudget(inspection.photos) };
+    const analysis = await api.analyze(sendable, answers, controller.signal);
     const followUp = analysis.diagnosis?.follow_up;
     const updated = await db.put("inspections", {
       ...inspection,

@@ -391,3 +391,27 @@ test("the demo engine walks questions to diagnosis and covers every result type"
     assert.equal(result.metadata.model_id, "demo");
   }
 });
+
+test("Vercel serves static pages with the same security headers as the app, and allows long analyses", async () => {
+  const { readFileSync } = await import("node:fs");
+  const vercel = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")) as {
+    fluid: boolean;
+    functions: Record<string, { maxDuration: number }>;
+    headers: Array<{ source: string; headers: Array<{ key: string; value: string }> }>;
+  };
+  assert.equal(vercel.fluid, true);
+  // The web client waits 150 s; the function must be allowed to finish first.
+  assert.ok(vercel.functions["api/index.js"]!.maxDuration >= 150);
+  const staticHeaders = Object.fromEntries(
+    vercel.headers.find((rule) => rule.source === "/((?!api/).*)")!.headers.map(({ key, value }) => [key.toLowerCase(), value]),
+  );
+  const { base, close } = await serve({});
+  try {
+    const response = await fetch(`${base}/`);
+    for (const name of ["content-security-policy", "permissions-policy", "referrer-policy", "x-content-type-options", "x-frame-options", "cross-origin-opener-policy"]) {
+      assert.equal(staticHeaders[name], response.headers.get(name), `${name} matches the Express header`);
+    }
+  } finally {
+    await close();
+  }
+});

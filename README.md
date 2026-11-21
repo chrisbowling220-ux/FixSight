@@ -4,7 +4,7 @@ Photograph a visible repair problem and get a cautious, evidence-based first loo
 
 FixSight is a photo-based first opinion. It cannot see inside walls, measure moisture or temperature, detect gas, or confirm structural safety, and it never replaces an on-site professional. Electrical, gas, and structural hazards are always routed to a licensed professional.
 
-> **Status:** release candidate on branch `claude/fixsight-release-candidate`, not deployed. See [release readiness](docs/FIXSIGHT_RELEASE_READINESS.md) for what is verified, what is not, and what needs your approval.
+> **Status:** release candidate on branch `claude/fixsight-release-candidate`, not deployed. See [release readiness](docs/FIXSIGHT_RELEASE_READINESS.md) for what is verified, what is not, and what needs your approval. To go live at fixsight.contractor-office.com, follow the [launch plan](docs/FIXSIGHT_LAUNCH_PLAN.md).
 
 ## Quick start (about 5 minutes)
 
