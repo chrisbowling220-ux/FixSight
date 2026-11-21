@@ -318,6 +318,9 @@ test("report generation is deterministic and resolving a diagnosis uses no extra
   assert.equal((report.readings as unknown[]).length, 1);
   assert.match(String(report.share_text), /Moisture at center of the stain: 22/);
   assert.match(String(report.share_text), /dry reference 8\.5/);
+  assert.match(String(report.share_text), /Safety warning: Keep people away if the ceiling is sagging/);
+  assert.match(String(report.share_text), /Temporary option: Avoid using the fixture/);
+  assert.match(String(report.share_text), /Tools and materials: moisture meter/);
 
   const resolvedResponse = await apiFetch(
     api.baseUrl,

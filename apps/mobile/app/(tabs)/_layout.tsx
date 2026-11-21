@@ -19,7 +19,7 @@ export default function TabLayout() {
         options={{
           title: "New scan",
           tabBarLabel: "Scan",
-          tabBarIcon: ({ color, size }) => <Ionicons name="scan" color={color} size={size} />,
+          tabBarIcon: ({ focused, size }) => <Ionicons name="scan" color={focused ? colors.brand : colors.muted} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -27,7 +27,7 @@ export default function TabLayout() {
         options={{
           title: "Scan history",
           tabBarLabel: "History",
-          tabBarIcon: ({ color, size }) => <Ionicons name="time-outline" color={color} size={size} />,
+          tabBarIcon: ({ focused, size }) => <Ionicons name="time-outline" color={focused ? colors.brand : colors.muted} size={size} />,
         }}
       />
     </Tabs>

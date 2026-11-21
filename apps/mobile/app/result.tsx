@@ -230,6 +230,18 @@ function DiagnosisCard({ d }: { d: Diagnosis }) {
         </Section>
       </View>
 
+      {d.next_measurement && (
+        <View style={cardStyles.card}>
+          <Section title="Suggested next measurement">
+            <Text style={cardStyles.subheading}>{d.next_measurement.instrument.replace(/_/g, " ")}</Text>
+            <Text style={cardStyles.bodyText}>{d.next_measurement.target}</Text>
+            <Text style={cardStyles.bodyText}>{d.next_measurement.why}</Text>
+            <Text style={cardStyles.bodyText}>{d.next_measurement.expected_discriminator}</Text>
+            {d.next_measurement.safety_note && <Text style={cardStyles.bodyText}>{d.next_measurement.safety_note}</Text>}
+          </Section>
+        </View>
+      )}
+
       {/* Risk if ignored */}
       <View style={cardStyles.card}>
         <Section title="Risk if Ignored">

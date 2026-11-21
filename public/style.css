@@ -277,3 +277,16 @@ textarea:focus { outline: 2px solid var(--brand-2); border-color: transparent; }
   border-radius: var(--radius);
   border: 2px solid var(--brand-2);
 }
+
+
+.print-heading { display: none; }
+@media print {
+  .topbar, .result-actions { display: none !important; }
+  body, #app, .screen { background: white !important; color: black !important; }
+  #screen-capture, #screen-loading, #screen-questions { display: none !important; }
+  .print-heading { display: block; font-size: 18pt; font-weight: bold; margin-bottom: 12pt; }
+  .print-heading small { font-size: 10pt; font-weight: normal; }
+  .result-photo { max-height: 240px; width: auto; object-fit: contain; }
+  .info-card, .warn-card, .diag-head { break-inside: avoid; box-shadow: none; }
+  .disclaimer { display: block; font-size: 9pt; }
+}

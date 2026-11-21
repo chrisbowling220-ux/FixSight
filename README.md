@@ -1,54 +1,39 @@
-# FixSight — working prototype
+# FixSight
 
-Point your phone at a problem, get a first-level expert diagnosis: likely issue, probable cause,
-severity, repair options, DIY-vs-pro call, and a shareable repair summary.
+FixSight offers an AI-assisted first look at visible repair problems. A photo can suggest possible causes and safety concerns; it cannot confirm a diagnosis, inspect concealed conditions, or replace an on-site professional.
 
-**How it works:** a small Express server serves a mobile-first web app and proxies photo scans to
-the Claude vision API (`claude-opus-5`) with a structured-output schema, so every response is a
-guaranteed-valid diagnosis JSON. The model may ask up to 3 follow-up questions before diagnosing.
+**Development only:** the current server uses a development identity and process-local scan storage. It is not suitable for customer data or a public production deployment. See [release readiness](docs/FIXSIGHT_RELEASE_READINESS.md) and the [audit](docs/FIXSIGHT_FULL_AUDIT.md).
 
-## Run it
+## Local development
 
-```powershell
-npm install
-copy .env.example .env     # then paste your Anthropic API key into .env
+Use Node 22.13 or newer on the Node 22 line (Expo SDK 58 also supports Node 24.3+ on the 24 line). From the repository root:
+
+```sh
+npm ci
+npm run check
+npm run dev
+```
+
+Open http://localhost:3000. Without an Anthropic key the UI and health endpoint run, but analysis is unavailable. To use a provider with authorization, copy `.env.example` to `.env` and configure the relevant key locally; do not commit it. Requests to AI and voice providers can incur charges. The model is configurable and is not changed automatically during upgrades.
+
+For compiled server execution, run `npm run build` followed by `npm start`. The Expo app is separate:
+
+```sh
+cd apps/mobile
+npm ci
+npm run typecheck
+npx expo-doctor@latest
 npm start
 ```
 
-Open http://localhost:3000
+Set `EXPO_PUBLIC_API_BASE_URL` to an accessible backend URL for a physical device; `localhost` on the device refers to the device itself. Native camera and microphone permissions, device connectivity, offline behavior and iOS/Android builds require device-specific verification.
 
-## Try it on your phone
+## Layout
 
-The camera flow is designed for mobile. With your phone on the same Wi-Fi network:
+- `src/`: Express application, validated diagnosis engine, scan workflow, and voice proxy.
+- `public/`: mobile-first web client with browser-local history.
+- `apps/mobile/`: Expo Router app and device-local SQLite history.
+- `api/index.js` and `vercel.json`: serverless entry and routing configuration.
+- `test/` and `evaluation/`: automated tests and photo-evaluation harness.
 
-1. Find your PC's local IP: `ipconfig` → IPv4 Address (e.g. `192.168.1.25`)
-2. On your phone, open `http://192.168.1.25:3000`
-3. If it doesn't load, allow Node.js through Windows Firewall (private networks).
-
-## Project layout
-
-```
-server.js          Express server + Claude API call (system prompt, JSON schema)
-public/index.html  Single-page app shell
-public/app.js      Scan flow: photo → questions → diagnosis card → history
-public/style.css   Mobile-first styles
-```
-
-## What's in the diagnosis card
-
-- Likely diagnosis + confidence
-- Severity score (1–10) with label
-- Probable cause
-- Recommended repair / cheapest safe fix / temporary fix
-- DIY vs professional call + difficulty + tools & parts
-- Risk if ignored + estimated cost range
-- Safety warnings when relevant
-- One-tap **Copy repair summary** — plain-text report for a contractor, landlord, or insurer
-
-Scan history is stored locally in the browser (localStorage), last 20 scans.
-
-## Notes
-
-- Each scan costs roughly $0.02–0.06 in API usage depending on image size and follow-ups.
-- FixSight is a first opinion, not an inspection. The UI and prompt are deliberately
-  conservative about electrical, gas, and structural issues.
+Run `npm run sync:contract` after changing `src/diagnosis-wire.ts` or `src/request-wire.ts`; the test suite checks the generated mobile copies. The server-side repository is volatile and the device header is not authentication. Do not use either as a production security boundary.

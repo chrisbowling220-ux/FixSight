@@ -9,10 +9,11 @@
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/diagnosis-contract.test.ts test/scans-workflow.test.ts test/voice.test.ts",
+    "test": "tsx --test test/diagnosis-contract.test.ts test/scans-workflow.test.ts test/voice.test.ts test/ai-mock.test.ts && node --test test/web-voice.test.cjs test/web-analyze.test.cjs",
     "eval": "tsx scripts/evaluate.ts",
     "verify:voice": "tsx scripts/verify-voice.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "check": "npm run typecheck && npm test && npm run build",
+    "sync:contract": "tsx scripts/sync-contract.ts"
   },
   "engines": {
     "node": ">=20"
@@ -20,7 +21,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
     "dotenv": "^17.4.2",
-    "expo": "^57.0.6",
     "express": "^5.2.1",
     "express-rate-limit": "^8.1.0",
     "helmet": "^8.1.0",

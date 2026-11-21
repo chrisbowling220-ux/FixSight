@@ -29,21 +29,7 @@
         <img id="photo-preview" alt="Selected photo" hidden />
       </label>
 
-      <!-- Vision Mode — revealed after a photo is loaded -->
-      <div id="vision-section" class="field" hidden>
-        <div class="field-label">Vision Mode <span class="muted">(enhance what the AI sees)</span></div>
-        <div class="chips" id="mode-chips">
-          <button class="chip selected" data-mode="">👁 Standard</button>
-          <button class="chip" data-mode="thermal">🌡️ Heat</button>
-          <button class="chip" data-mode="cold">❄️ Cold</button>
-          <button class="chip" data-mode="wet">💧 Wet</button>
-          <button class="chip" data-mode="xray">🔬 X-Ray</button>
-        </div>
-        <div id="mode-preview-wrap" hidden>
-          <div id="mode-preview-label" class="mode-preview-label"></div>
-          <img id="mode-preview-img" class="mode-preview-img" alt="Vision mode preview" />
-        </div>
-      </div>
+      <p class="muted">Photos show visible surfaces only; they cannot measure heat or moisture or see inside walls.</p>
 
       <div class="field">
         <div class="field-label">What is it? <span class="muted">(optional)</span></div>
@@ -100,6 +86,14 @@
       <div id="result-card"></div>
       <div class="result-actions">
         <button id="copy-summary" class="primary-btn">Copy repair summary</button>
+        <button id="print-report" class="ghost-btn" type="button" hidden>Print or save as PDF</button>
+        <div id="voice-playback" hidden>
+          <button id="voice-read" class="ghost-btn" type="button">Read aloud</button>
+          <button id="voice-pause" class="ghost-btn" type="button" hidden>Pause</button>
+          <button id="voice-replay" class="ghost-btn" type="button" hidden>Replay</button>
+          <button id="voice-stop" class="ghost-btn" type="button" hidden>Stop</button>
+          <p id="voice-playback-status" role="status"></p>
+        </div>
         <button id="new-scan" class="ghost-btn">Scan something else</button>
       </div>
     </section>

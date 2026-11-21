@@ -60,7 +60,12 @@ function shareText(scan: StoredScan): string {
     `Severity: ${diagnosis.severity}/10 (${diagnosis.urgency})`,
     `Confidence: ${Math.round(diagnosis.confidence * 100)}%`,
     ...readingLines(scan.request.readings),
+    ...diagnosis.safety_warnings.map((warning) => `Safety warning: ${warning}`),
     `Recommended fix: ${diagnosis.recommendation.best_fix}`,
+    `Temporary option: ${diagnosis.recommendation.cheap_or_temp_fix}`,
+    ...(diagnosis.recommendation.tools_or_parts.length
+      ? [`Tools and materials: ${diagnosis.recommendation.tools_or_parts.join("; ")}`]
+      : []),
     ...(next
       ? [
           `Next measurement: ${next.instrument.replace(/_/g, " ")} at ${next.target}`,

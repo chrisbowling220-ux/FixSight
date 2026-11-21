@@ -1,4 +1,5 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -7,6 +8,7 @@ import {
   normalizeAnalysis,
   parseAnalysis,
 } from "../src/diagnosis-contract.js";
+import { parseAnalysis as parseMobileAnalysis, AnalyzeRequestSchema as MobileRequestSchema } from "../apps/mobile/src/lib/contract.js";
 import { parseAnalyzeRequest } from "../src/request-schema.js";
 
 const VALID_DIAGNOSIS = {
@@ -79,6 +81,30 @@ test("parseAnalysis accepts a complete diagnosis response", () => {
   assert.equal(parsed.diagnosis?.recommendation.difficulty, "moderate");
 });
 
+test("mobile wire contract is synchronized with the server", () => {
+  const source = readFileSync(new URL("../src/diagnosis-wire.ts", import.meta.url), "utf8");
+  const mobile = readFileSync(new URL("../apps/mobile/src/lib/diagnosis-wire.ts", import.meta.url), "utf8");
+  assert.equal(mobile, "// Generated from src/diagnosis-wire.ts by npm run sync:contract. Do not edit.\n" + source);
+  const request = readFileSync(new URL("../src/request-wire.ts", import.meta.url), "utf8");
+  const mobileRequest = readFileSync(new URL("../apps/mobile/src/lib/request-wire.ts", import.meta.url), "utf8");
+  assert.equal(mobileRequest, "// Generated from src/request-wire.ts by npm run sync:contract. Do not edit.\n" + request);
+});
+
+test("mobile accepts backend diagnoses and preserves instrument guidance", () => {
+  const measurement = {
+    instrument: "moisture_meter", target: "Stained drywall", why: "Compare with a dry area",
+    expected_discriminator: "A higher reading supports further leak investigation", safety_note: null,
+  };
+  const response = analysisWithDiagnosis({ confidence: 0.5, next_measurement: measurement });
+  const backend = parseAnalysis(response);
+  assert.deepEqual(parseMobileAnalysis(backend), backend);
+  assert.deepEqual(parseMobileAnalysis(applySafetyRules(parseAnalysis(analysisWithDiagnosis({
+    confidence: 0.5, next_measurement: measurement, professional_type: "electrician",
+  })))).diagnosis?.next_measurement, null);
+  const oldDiagnosis = withoutProperty(VALID_DIAGNOSIS, "next_measurement");
+  assert.equal(parseMobileAnalysis({ ...VALID_ANALYSIS, diagnosis: oldDiagnosis }).diagnosis?.next_measurement, null);
+});
+
 test("parseAnalysis accepts questions, retake, and cannot-assess responses", async (t) => {
   await t.test("questions", () => {
     const value = {
@@ -98,6 +124,7 @@ test("parseAnalysis accepts questions, retake, and cannot-assess responses", asy
     };
 
     assert.deepEqual(parseAnalysis(value), value);
+    assert.deepEqual(parseMobileAnalysis(value), value);
   });
 
   await t.test("retake", () => {
@@ -111,6 +138,7 @@ test("parseAnalysis accepts questions, retake, and cannot-assess responses", asy
     };
 
     assert.deepEqual(parseAnalysis(value), value);
+    assert.deepEqual(parseMobileAnalysis(value), value);
   });
 
   await t.test("cannot_assess", () => {
@@ -124,6 +152,7 @@ test("parseAnalysis accepts questions, retake, and cannot-assess responses", asy
     };
 
     assert.deepEqual(parseAnalysis(value), value);
+    assert.deepEqual(parseMobileAnalysis(value), value);
   });
 });
 
@@ -596,7 +625,7 @@ test("applySafetyRules drops a next measurement it just made pro-only", () => {
 });
 
 test("parseAnalyzeRequest accepts evidence images and instrument readings", () => {
-  const parsed = parseAnalyzeRequest({
+  const request = {
     images: [{ data: JPEG_BASE64, media_type: "image/jpeg" }],
     evidence: [
       {
@@ -625,7 +654,9 @@ test("parseAnalyzeRequest accepts evidence images and instrument readings", () =
       },
     ],
     answers: [],
-  });
+  };
+  const parsed = parseAnalyzeRequest(request);
+  assert.deepEqual(MobileRequestSchema.parse(request), parsed);
 
   assert.equal(parsed.evidence.length, 2);
   assert.equal(parsed.evidence[0]?.kind, "thermal");
@@ -694,4 +725,18 @@ test("parseAnalyzeRequest rejects invalid evidence and readings", async (t) => {
     });
     assert.equal(parsed.readings.length, 1);
   });
+});
+
+test("mobile deadline aborts a pending request and respects caller cancellation", async () => {
+  const { withDeadline } = await import("../apps/mobile/src/lib/deadline.js");
+  const waitForAbort = (signal: AbortSignal) => new Promise<void>((_resolve, reject) => {
+    if (signal.aborted) return reject(new Error("aborted"));
+    signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+  });
+  await assert.rejects(withDeadline(waitForAbort, undefined, 5), /timed out/);
+  const caller = new AbortController();
+  const pending = withDeadline(waitForAbort, caller.signal, 1_000);
+  caller.abort();
+  await assert.rejects(pending, /aborted/);
+  assert.equal(await withDeadline(async () => "ok", undefined, 5), "ok");
 });

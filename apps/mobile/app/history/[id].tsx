@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ActivityIndicator,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -282,6 +283,13 @@ export default function HistoryDetailScreen() {
     enabled: Boolean(id),
   });
 
+  const parentId = record?.parentScanId;
+  const { data: previousScan, isLoading: previousLoading } = useQuery({
+    queryKey: ["history", parentId],
+    queryFn: () => getHistoryScan(parentId ?? ""),
+    enabled: Boolean(parentId),
+  });
+
   async function handleToggleResolved() {
     if (!record) return;
     await setHistoryResolved(record.id, !record.resolved);
@@ -331,6 +339,31 @@ export default function HistoryDetailScreen() {
         )}
       </View>
 
+      {parentId && (
+        <View style={styles.card}>
+          <Section title="Current scan photo">
+            <Image source={{ uri: record.thumbnailUri }} style={styles.previousImage} accessibilityLabel="Current scan photo" />
+          </Section>
+        </View>
+      )}
+      {parentId && (
+        <View style={styles.card}>
+          <Section title="Earlier scan">
+            {previousLoading ? <Text style={styles.bodyText}>Loading earlier scan…</Text> : previousScan ? (
+              <>
+                <Text style={styles.bodyText}>{formatDate(previousScan.createdAt)}</Text>
+                <Image source={{ uri: previousScan.thumbnailUri }} style={styles.previousImage} accessibilityLabel="Earlier scan photo" />
+                <Text style={styles.bodyText}>{previousScan.analysis.diagnosis?.diagnosis ?? previousScan.analysis.note}</Text>
+                <TouchableOpacity onPress={() => router.push({ pathname: "/history/[id]", params: { id: previousScan.id } })}>
+                  <Text style={styles.previousLink}>Open earlier scan</Text>
+                </TouchableOpacity>
+              </>
+            ) : <Text style={styles.bodyText}>The earlier scan is unavailable on this device.</Text>}
+            <Text style={styles.bodyText}>Compare the photos and assessments carefully. A new scan does not establish that a problem has improved or been resolved.</Text>
+          </Section>
+        </View>
+      )}
+
       {/* Diagnosis content */}
       {d && <DiagnosisDetail d={d} />}
 
@@ -365,6 +398,8 @@ export default function HistoryDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  previousImage: { width: "100%", height: 180, borderRadius: radius.small },
+  previousLink: { color: colors.brand, fontWeight: "700", paddingVertical: 8 },
   root: {
     flex: 1,
     backgroundColor: colors.canvas,

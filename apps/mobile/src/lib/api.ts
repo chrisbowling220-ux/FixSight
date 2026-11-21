@@ -1,6 +1,7 @@
 import { AnalyzeRequestSchema, parseAnalysis } from "./contract";
 import type { Analysis, AnalyzeRequest } from "./contract";
 import { getAuthHeaders } from "./auth";
+import { DeadlineExceededError, withDeadline } from "./deadline";
 
 const configuredBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
 export const API_BASE_URL = (configuredBaseUrl || "http://localhost:3000").replace(/\/$/, "");
@@ -49,36 +50,44 @@ export async function analyzeScan(
 ): Promise<AnalysisResponse> {
   const body = AnalyzeRequestSchema.parse(request);
   const authHeaders = await getAuthHeaders();
-  let response: Response;
-
   try {
-    response = await fetch(`${API_BASE_URL}/api/v1/scans`, {
-      method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify(body),
-      ...(signal != null ? { signal } : {}),
-    });
+    return await withDeadline(async (requestSignal) => {
+      const response = await fetch(`${API_BASE_URL}/api/v1/scans`, {
+        method: "POST",
+        headers: { Accept: "application/json", "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify(body),
+        signal: requestSignal,
+      });
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (error) {
+        if (requestSignal.aborted) throw error;
+        payload = null;
+      }
+      if (!response.ok) {
+        const details = errorMessage(payload, response.status);
+        throw new ScanApiError(details.message, response.status, details.code);
+      }
+      const extracted = extractAnalysis(payload);
+      try {
+        return { scanId: extracted.scanId, analysis: parseAnalysis(extracted.candidate) };
+      } catch {
+        throw new ScanApiError(
+          "The server returned an invalid diagnosis. No advice was shown.",
+          response.status,
+          "INVALID_RESPONSE",
+        );
+      }
+    }, signal);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
+    if (error instanceof ScanApiError) throw error;
+    if (signal?.aborted) throw error;
+    if (error instanceof DeadlineExceededError) {
+      throw new ScanApiError("The request timed out. It may still be processing; wait before trying again.");
+    }
     throw new ScanApiError(
       `Could not reach FixSight at ${API_BASE_URL}. Check the API address and your connection.`,
-    );
-  }
-
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const details = errorMessage(payload, response.status);
-    throw new ScanApiError(details.message, response.status, details.code);
-  }
-
-  const extracted = extractAnalysis(payload);
-  try {
-    return { scanId: extracted.scanId, analysis: parseAnalysis(extracted.candidate) };
-  } catch {
-    throw new ScanApiError(
-      "The server returned an invalid diagnosis. No advice was shown.",
-      response.status,
-      "INVALID_RESPONSE",
     );
   }
 }

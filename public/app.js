@@ -9,152 +9,16 @@ const state = {
   description: "",
   questions: [],      // follow-up questions from the model
   result: null,
-  visionMode: null,     // null | "thermal" | "cold" | "wet" | "xray"
-  filteredImage: null,  // base64 (no prefix) of processed image for API
-  filteredThumb: null,  // data URL of processed thumbnail for UI
 };
 
 const $ = (id) => document.getElementById(id);
+let resetReadAloud = () => {};
 const screens = ["screen-capture", "screen-loading", "screen-questions", "screen-result"];
 
 function show(screenId) {
+  if (screenId !== "screen-result") resetReadAloud();
   for (const id of screens) $(id).hidden = id !== screenId;
   window.scrollTo(0, 0);
-}
-
-// ---------- vision mode filters ----------
-const FILTER_LABELS = {
-  thermal: "Thermal — heat distribution",
-  cold: "Cold — infiltration & cold spots",
-  wet: "Wet — moisture detection",
-  xray: "X-Ray — edges & structure",
-};
-
-function applyFilterPixels(imageData, mode) {
-  const d = imageData.data;
-  const w = imageData.width;
-  const h = imageData.height;
-
-  if (mode === "thermal") {
-    // Remap luminance to blue→cyan→green→yellow→red palette
-    for (let i = 0; i < d.length; i += 4) {
-      const t = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
-      let r, g, b;
-      if (t < 0.25) { r = 0; g = Math.round(t * 4 * 255); b = 255; }
-      else if (t < 0.5) { r = 0; g = 255; b = Math.round((1 - (t - 0.25) * 4) * 255); }
-      else if (t < 0.75) { r = Math.round((t - 0.5) * 4 * 255); g = 255; b = 0; }
-      else { r = 255; g = Math.round((1 - (t - 0.75) * 4) * 255); b = 0; }
-      d[i] = r; d[i + 1] = g; d[i + 2] = b;
-    }
-  } else if (mode === "cold") {
-    // Shift dark/shadowed areas toward blue/cyan to surface cold spots
-    for (let i = 0; i < d.length; i += 4) {
-      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      const f = Math.max(0, 1 - lum / 128);
-      d[i] = Math.max(0, d[i] - Math.round(f * 60));
-      d[i + 1] = Math.max(0, d[i + 1] - Math.round(f * 20));
-      d[i + 2] = Math.min(255, d[i + 2] + Math.round(f * 100));
-    }
-  } else if (mode === "wet") {
-    // Boost contrast and tint dark regions teal-green to highlight moisture
-    for (let i = 0; i < d.length; i += 4) {
-      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      const f = Math.max(0, 1 - lum / 150);
-      // contrast boost
-      d[i]     = Math.min(255, Math.max(0, Math.round((d[i]     - 128) * 1.3 + 128)));
-      d[i + 1] = Math.min(255, Math.max(0, Math.round((d[i + 1] - 128) * 1.3 + 128)));
-      d[i + 2] = Math.min(255, Math.max(0, Math.round((d[i + 2] - 128) * 1.3 + 128)));
-      // teal-green tint on dark areas
-      d[i]     = Math.max(0,   d[i]     - Math.round(f * 40));
-      d[i + 1] = Math.min(255, d[i + 1] + Math.round(f * 30));
-      d[i + 2] = Math.min(255, d[i + 2] + Math.round(f * 20));
-    }
-  } else if (mode === "xray") {
-    // Sobel edge detection — bright edges on dark background
-    const gray = new Float32Array(w * h);
-    for (let i = 0; i < d.length; i += 4) {
-      gray[i / 4] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    }
-    const Gx = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-    const Gy = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let gx = 0, gy = 0;
-        for (let ky = -1; ky <= 1; ky++) {
-          for (let kx = -1; kx <= 1; kx++) {
-            const val = gray[Math.min(h - 1, Math.max(0, y + ky)) * w + Math.min(w - 1, Math.max(0, x + kx))];
-            const ki = (ky + 1) * 3 + (kx + 1);
-            gx += Gx[ki] * val;
-            gy += Gy[ki] * val;
-          }
-        }
-        const mag = Math.min(255, Math.sqrt(gx * gx + gy * gy));
-        const idx = (y * w + x) * 4;
-        d[idx] = d[idx + 1] = d[idx + 2] = mag;
-      }
-    }
-  }
-
-  imageData.data.set(d);
-}
-
-// Loads the stored full-size JPEG (base64), draws it onto a canvas at maxDim,
-// applies the filter, and returns a data URL.
-function renderFilteredDataUrl(mode, maxDim, quality = 0.85) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, w, h);
-      const imageData = ctx.getImageData(0, 0, w, h);
-      applyFilterPixels(imageData, mode);
-      ctx.putImageData(imageData, 0, 0);
-      resolve(canvas.toDataURL("image/jpeg", quality));
-    };
-    img.onerror = reject;
-    img.src = "data:image/jpeg;base64," + state.image;
-  });
-}
-
-async function selectMode(mode) {
-  state.visionMode = mode || null;
-  state.filteredImage = null;
-  state.filteredThumb = null;
-
-  // Sync chip highlight — Standard chip has data-mode=""
-  document.querySelectorAll("#mode-chips .chip").forEach((c) => {
-    c.classList.toggle("selected", c.dataset.mode === (mode || ""));
-  });
-
-  const previewWrap = $("mode-preview-wrap");
-  previewWrap.hidden = true;
-
-  if (!mode) return;
-
-  try {
-    // Thumbnail (320px) for the UI preview — fast
-    const thumbDataUrl = await renderFilteredDataUrl(mode, 320, 0.80);
-    state.filteredThumb = thumbDataUrl;
-    $("mode-preview-label").textContent = FILTER_LABELS[mode] || mode;
-    $("mode-preview-img").src = thumbDataUrl;
-    previewWrap.hidden = false;
-
-    // Full image for the API (capped at 900px to keep Sobel fast; backend
-    // will further resize toward the 2576px long-edge ceiling anyway)
-    const fullDataUrl = await renderFilteredDataUrl(mode, 900, 0.88);
-    state.filteredImage = fullDataUrl.split(",")[1];
-  } catch {
-    // Filter failed — fall back silently to unenhanced scan
-    state.visionMode = null;
-    state.filteredImage = null;
-    state.filteredThumb = null;
-  }
 }
 
 // ---------- photo selection & resize ----------
@@ -170,9 +34,6 @@ $("photo-input").addEventListener("change", async (e) => {
     $("photo-preview").hidden = false;
     $("photo-placeholder").hidden = true;
     $("analyze-btn").disabled = false;
-    $("vision-section").hidden = false;
-    // reset to standard mode when new photo loaded
-    selectMode(null);
   } catch {
     alert("Couldn't read that image — try another photo.");
   }
@@ -213,19 +74,6 @@ $("category-chips").addEventListener("click", (e) => {
   }
 });
 
-// ---------- vision mode chips ----------
-$("mode-chips").addEventListener("click", (e) => {
-  const chip = e.target.closest(".chip");
-  if (!chip) return;
-  const mode = chip.dataset.mode || null;
-  // clicking the already-active non-standard chip toggles it off
-  if (mode && mode === state.visionMode) {
-    selectMode(null);
-  } else {
-    selectMode(mode);
-  }
-});
-
 // ---------- analyze ----------
 const LOADER_LINES = [
   "Analyzing the photo…",
@@ -250,25 +98,21 @@ function stopLoader() { clearInterval(loaderTimer); }
 
 async function analyze(answers) {
   startLoader();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
   try {
-    // When a vision mode is active, send the original image first, then the
-    // processed image as the second — matching what the system prompt expects.
-    const images = [{ data: state.image, media_type: state.mediaType || "image/jpeg" }];
-    if (state.visionMode && state.filteredImage) {
-      images.push({ data: state.filteredImage, media_type: "image/jpeg" });
-    }
     const body = {
-      images,
-      category: state.category,
+      images: [{ data: state.image, media_type: state.mediaType || "image/jpeg" }],
+      ...(state.category ? { category: state.category } : {}),
       description: state.description,
       answers: answers || [],
     };
-    if (state.visionMode) body.vision_mode = state.visionMode;
 
     const res = await fetch("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
     const data = await res.json();
     stopLoader();
@@ -290,9 +134,13 @@ async function analyze(answers) {
     } else {
       showError(data.note || "This photo couldn't be assessed. Try a clearer shot of the problem area.");
     }
-  } catch {
+  } catch (error) {
     stopLoader();
-    showError("Couldn't reach the FixSight server. Is it running?");
+    showError(error?.name === "AbortError"
+      ? "The request timed out. It may still be processing; wait before trying again."
+      : "Couldn't reach the FixSight server. Check your connection and try again.");
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -302,8 +150,11 @@ $("analyze-btn").addEventListener("click", () => {
 });
 
 function showError(message) {
+  state.result = null;
+  resetReadAloud();
   $("result-card").innerHTML = `<div class="error-card">${escapeHtml(message)}</div>`;
   $("copy-summary").hidden = true;
+  $("print-report").hidden = true;
   show("screen-result");
 }
 
@@ -449,7 +300,8 @@ function severityColor(score) {
   return "#c93a3a";
 }
 
-function renderResult(data, photoDataUrl) {
+function renderResult(data, photoDataUrl, reportDate = new Date().toISOString()) {
+  resetReadAloud();
   const d = diagnosisForDisplay(data);
   const [diyLabel, diyClass] = DIY_LABELS[d.diy_or_pro] || ["", ""];
   const color = severityColor(d.severity_score);
@@ -480,6 +332,7 @@ function renderResult(data, photoDataUrl) {
     : "";
 
   $("result-card").innerHTML = `
+    <div class="print-heading">FixSight photo assessment<br><small>Assessed: ${escapeHtml(new Date(reportDate).toLocaleString())}</small></div>
     ${photo ? `<img class="result-photo" src="${photo}" alt="Scanned photo" />` : ""}
     <div class="diag-head">
       <div class="diag-title">${escapeHtml(d.likely_diagnosis)}</div>
@@ -514,10 +367,12 @@ function renderResult(data, photoDataUrl) {
     ${disclaimerCard}
   `;
   $("copy-summary").hidden = false;
+  $("print-report").hidden = false;
   $("copy-summary").textContent = "Copy repair summary";
 }
 
 function renderNonDiagnosis(data) {
+  resetReadAloud();
   const isRetake = data.result_type === "retake";
   const title = isRetake ? "Retake the photo" : "Unable to assess safely";
   const guidance = toList(data.retake_guidance);
@@ -542,6 +397,7 @@ function renderNonDiagnosis(data) {
       : ""}
   `;
   $("copy-summary").hidden = true;
+  $("print-report").hidden = true;
 }
 
 function infoCard(label, bodyHtml) {
@@ -571,11 +427,13 @@ function buildShareSummary(data) {
     d.risk_if_ignored ? `Risk if ignored: ${d.risk_if_ignored}` : "",
     warnings.length ? `Safety: ${warnings.join(" ")}` : "",
     data.note ? `Note: ${data.note}` : "",
-    d.disclaimer_required
+    (d.disclaimer_required || d.needs_professional || !d.safe_to_diy || warnings.length > 0)
       ? "Photo-based first opinion only; confirm safety-critical work with an on-site professional."
       : ""
   ].filter(Boolean).join("\n");
 }
+
+$("print-report").addEventListener("click", () => window.print());
 
 $("copy-summary").addEventListener("click", async () => {
   const summary = buildShareSummary(state.result);
@@ -639,7 +497,7 @@ $("history-list").addEventListener("click", (e) => {
   const item = loadHistory().find((i) => i.id === Number(el.dataset.id));
   if (!item) return;
   state.result = item.result;
-  renderResult(item.result, item.thumb);
+  renderResult(item.result, item.thumb, item.date);
   show("screen-result");
 });
 
@@ -657,17 +515,9 @@ function resetToHome() {
   state.thumb = null;
   state.questions = [];
   state.result = null;
-  state.visionMode = null;
-  state.filteredImage = null;
-  state.filteredThumb = null;
   $("photo-input").value = "";
   $("photo-preview").hidden = true;
   $("photo-placeholder").hidden = false;
-  $("vision-section").hidden = true;
-  $("mode-preview-wrap").hidden = true;
-  document.querySelectorAll("#mode-chips .chip").forEach((c) => {
-    c.classList.toggle("selected", c.dataset.mode === "");
-  });
   $("analyze-btn").disabled = true;
   renderHistory();
   show("screen-capture");
@@ -840,4 +690,89 @@ renderHistory();
     if (recording) stop();
     else start();
   });
+})();
+
+
+// Playback is generated only on an explicit tap; replay uses the existing audio.
+(function initReadAloud() {
+  const container = $("voice-playback");
+  const read = $("voice-read");
+  const pause = $("voice-pause");
+  const replay = $("voice-replay");
+  const stop = $("voice-stop");
+  const status = $("voice-playback-status");
+  let available = false;
+  let player = null;
+  let objectUrl = null;
+  let pending = null;
+  let generation = 0;
+
+  function controls() {
+    container.hidden = !available || !state.result?.diagnosis || $("screen-result").hidden;
+    read.hidden = Boolean(player);
+    pause.hidden = !player;
+    replay.hidden = !player;
+    stop.hidden = !player && !pending;
+    pause.textContent = player && !player.paused ? "Pause" : "Resume";
+  }
+  resetReadAloud = () => {
+    generation++;
+    if (pending) pending.abort();
+    pending = null;
+    if (player) { player.pause(); player.src = ""; }
+    player = null;
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+    status.textContent = "";
+    controls();
+  };
+  fetch("/api/voice/status").then((r) => r.ok ? r.json() : null).then((result) => {
+    available = Boolean(result?.available);
+    controls();
+  }).catch(() => {});
+  read.addEventListener("click", async () => {
+    if (pending || !state.result?.diagnosis) return;
+    const text = buildShareSummary(state.result);
+    if (text.length > 3000) { status.textContent = "This report is too long to read aloud. Copy the summary instead."; return; }
+    const requestGeneration = ++generation;
+    const controller = new AbortController();
+    pending = controller;
+    read.disabled = true;
+    status.textContent = "Preparing audio…";
+    controls();
+    try {
+      const response = await fetch("/api/voice/synthesize", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }), signal: controller.signal,
+      });
+      if (!response.ok) throw new Error("Audio could not be prepared. Please try again.");
+      const blob = await response.blob();
+      if (requestGeneration !== generation) return;
+      objectUrl = URL.createObjectURL(blob);
+      player = new Audio(objectUrl);
+      player.addEventListener("ended", controls);
+      await player.play();
+      status.textContent = "";
+    } catch (error) {
+      if (requestGeneration === generation) status.textContent = "Audio could not be played. Please try again.";
+    } finally {
+      if (requestGeneration === generation) { pending = null; read.disabled = false; controls(); }
+    }
+  });
+  pause.addEventListener("click", async () => {
+    if (!player) return;
+    try { if (player.paused) await player.play(); else player.pause(); }
+    catch { status.textContent = "Audio could not be played. Please try again."; }
+    controls();
+  });
+  replay.addEventListener("click", async () => {
+    if (!player) return;
+    try { player.currentTime = 0; await player.play(); }
+    catch { status.textContent = "Audio could not be played. Please try again."; }
+    controls();
+  });
+  stop.addEventListener("click", () => { resetReadAloud(); read.disabled = false; });
+  // A diagnosis is rendered before the result screen becomes visible.
+  const originalShow = show;
+  show = (screenId) => { originalShow(screenId); controls(); };
 })();
