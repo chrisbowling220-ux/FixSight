@@ -13,6 +13,7 @@ import { getHistoryScan, setHistoryResolved } from "../../src/lib/history";
 import type { Diagnosis } from "../../src/lib/contract";
 import { useScanFlow } from "../../src/state/ScanFlowContext";
 import { colors, radius, shadow } from "../../src/theme";
+import { SafetyNotices, V5Details } from "../../src/components/V5Details";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -197,6 +198,8 @@ function DiagnosisDetail({ d }: { d: Diagnosis }) {
         </Section>
       </View>
 
+      <V5Details d={d} />
+
       {/* Recommendations */}
       <View style={styles.card}>
         <Section title="Recommended Fix">
@@ -365,6 +368,7 @@ export default function HistoryDetailScreen() {
       )}
 
       {/* Diagnosis content */}
+      <SafetyNotices notices={record.analysis.safety_notices} />
       {d && <DiagnosisDetail d={d} />}
 
       {!d && (

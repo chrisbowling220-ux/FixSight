@@ -69,3 +69,22 @@ Supported expectations:
 Only configured expectations are scored. An empty `expect` object therefore checks just that the endpoint returns a successful JSON object. Scored fields may be returned at the response root or inside common wrappers such as `diagnosis`, `analysis`, `result`, or `data`.
 
 Each case prints `PASS` or `FAIL`, elapsed time, the returned scoring fields, and any failed assertions. The process exits with status `1` if a case fails, the server returns an error, an image cannot be read, or the case configuration is invalid. This makes the command suitable for local regression checks and CI once a stable, licensed photo corpus is available.
+
+## Cost guard, latency, tokens, and comparing models
+
+Each case is one real analysis. The evaluator first reads `/api/health`; if the server is not in demo mode it refuses to run unless you pass `--confirm-paid`, so a stray run cannot spend provider credit:
+
+```sh
+npm run demo                                   # terminal 1: free sample results
+npx tsx scripts/evaluate.ts evaluation/cases.json   # terminal 2: checks the harness
+```
+
+With authorization, compare models by running the same cases against a server per model. The server reports the model and token counts in response headers; the evaluator prints pass/fail, median/p90/max latency, total tokens, and an estimated list-price cost:
+
+```sh
+FIXSIGHT_MODEL=claude-opus-5   npm run dev     # then: npx tsx scripts/evaluate.ts evaluation/cases.json --confirm-paid
+FIXSIGHT_MODEL=claude-opus-5-5 PORT=3001 npm run dev
+FIXSIGHT_BASE_URL=http://localhost:3001 npx tsx scripts/evaluate.ts evaluation/cases.json --confirm-paid
+```
+
+Judge a model on the safety cases first (electrical, gas, structural escalation and refusal to invent measurements), then accuracy, then latency and cost. Use photos you are licensed to use; the cost estimate is an upper bound because cached prompt tokens bill at a discount.

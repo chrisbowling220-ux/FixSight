@@ -3,7 +3,7 @@
     "name": "FixSight",
     "slug": "fixsight",
     "version": "0.1.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "scheme": "fixsight",
     "userInterfaceStyle": "light",
     "ios": {
@@ -21,7 +21,9 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow FixSight to photograph the home issue you want to assess."
+          "cameraPermission": "Allow FixSight to photograph the home issue you want to assess.",
+          "recordAudioAndroid": false,
+          "microphonePermission": false
         }
       ],
       [

@@ -62,6 +62,13 @@ function analyzeHandler(engine: DiagnosisEngine): RequestHandler {
         "x-fixsight-prompt-version",
         result.metadata.prompt_version,
       );
+      // Token counts (no content) so evaluations can compare cost per model.
+      const usage = result.metadata;
+      if (usage.input_tokens !== undefined) response.setHeader("x-fixsight-input-tokens", String(usage.input_tokens));
+      if (usage.output_tokens !== undefined) response.setHeader("x-fixsight-output-tokens", String(usage.output_tokens));
+      if (usage.cache_read_input_tokens !== undefined) {
+        response.setHeader("x-fixsight-cache-read-tokens", String(usage.cache_read_input_tokens));
+      }
       response.json(result.analysis);
     } catch (error) {
       next(error);

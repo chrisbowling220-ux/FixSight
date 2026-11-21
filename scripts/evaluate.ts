@@ -42,10 +42,39 @@ interface FieldLookup {
   value: unknown;
 }
 
+interface Usage {
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+}
+
 interface CaseResult {
   elapsedMs: number;
   failures: string[];
   response?: JsonObject;
+  usage?: Usage;
+}
+
+// USD per million tokens (first-party API list prices, November 2026).
+// Cache reads bill at a discount, so these estimates are an upper bound.
+const PRICES: Record<string, { input: number; output: number }> = {
+  "claude-opus-5": { input: 5, output: 25 },
+  "claude-opus-5-5": { input: 4, output: 20 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  "claude-fable-5-2": { input: 8, output: 40 },
+};
+
+function estimateCost(usage: Usage): number | null {
+  const price = usage.model ? PRICES[usage.model] : undefined;
+  if (!price) return null;
+  return (usage.inputTokens * price.input + usage.outputTokens * price.output) / 1_000_000;
+}
+
+function percentile(values: number[], fraction: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? 0;
 }
 
 const DEFAULT_CASES_PATH = "evaluation/cases.json";
@@ -383,7 +412,7 @@ async function postCase(
   casesDirectory: string,
   endpoint: string,
   timeoutMs: number,
-): Promise<JsonObject> {
+): Promise<{ body: JsonObject; usage: Usage }> {
   const images = await Promise.all(
     evaluationCase.images.map((reference) => loadImage(reference, casesDirectory)),
   );
@@ -424,7 +453,16 @@ async function postCase(
     throw new Error(`HTTP ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
   }
   if (!isObject(body)) throw new Error("API response must be a JSON object.");
-  return body;
+  const count = (name: string) => Number(response.headers.get(name) ?? 0) || 0;
+  return {
+    body,
+    usage: {
+      model: response.headers.get("x-fixsight-model"),
+      inputTokens: count("x-fixsight-input-tokens"),
+      outputTokens: count("x-fixsight-output-tokens"),
+      cacheReadTokens: count("x-fixsight-cache-read-tokens"),
+    },
+  };
 }
 
 async function runCase(
@@ -435,11 +473,12 @@ async function runCase(
 ): Promise<CaseResult> {
   const started = Date.now();
   try {
-    const response = await postCase(evaluationCase, casesDirectory, endpoint, timeoutMs);
+    const { body, usage } = await postCase(evaluationCase, casesDirectory, endpoint, timeoutMs);
     return {
       elapsedMs: Date.now() - started,
-      failures: score(response, evaluationCase.expect),
-      response,
+      failures: score(body, evaluationCase.expect),
+      response: body,
+      usage,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -452,7 +491,10 @@ function caseLabel(evaluationCase: EvaluationCase, index: number): string {
 }
 
 function printUsage(): void {
-  console.log(`Usage: tsx scripts/evaluate.ts [cases-file]
+  console.log(`Usage: tsx scripts/evaluate.ts [cases-file] [--confirm-paid]
+
+Each case is one real analysis. Against a server that is not in demo mode
+this spends AI provider credit, so --confirm-paid is required.
 
 Defaults:
   cases-file             ${DEFAULT_CASES_PATH}
@@ -466,7 +508,10 @@ async function main(): Promise<void> {
     printUsage();
     return;
   }
-  if (args.length > 1) throw new Error("Expected zero or one cases-file argument. Use --help for usage.");
+  const confirmPaid = args.includes("--confirm-paid");
+  const positional = args.filter((arg) => !arg.startsWith("--"));
+  if (positional.length > 1) throw new Error("Expected zero or one cases-file argument. Use --help for usage.");
+  args.splice(0, args.length, ...positional);
 
   const casesPath = resolve(process.cwd(), args[0] ?? DEFAULT_CASES_PATH);
   const casesDirectory = resolve(casesPath, "..");
@@ -484,17 +529,30 @@ async function main(): Promise<void> {
   }
   const cases = validateCases(parsed);
 
-  console.log("FixSight Phase 0 evaluation");
+  const health = await fetch(new URL("/api/health", endpoint)).then((r) => r.json() as Promise<JsonObject>).catch(() => null);
+  if (!health) throw new Error(`The FixSight server at ${new URL(endpoint).origin} is not reachable.`);
+  if (health.demo_mode !== true && !confirmPaid) {
+    throw new Error(
+      `This server runs real analyses with ${String(health.model_id)}; ${cases.length} case(s) will be billed. Re-run with --confirm-paid once approved.`,
+    );
+  }
+
+  console.log("FixSight evaluation");
+  console.log(`Model:    ${String(health.model_id)} (prompt ${String(health.prompt_version)})${health.demo_mode ? " [demo mode]" : ""}`);
   console.log(`Cases:    ${relative(process.cwd(), casesPath) || casesPath}`);
   console.log(`Endpoint: ${endpoint}`);
   console.log(`Count:    ${cases.length}\n`);
 
   let passed = 0;
+  const latencies: number[] = [];
+  const usages: Usage[] = [];
   for (let index = 0; index < cases.length; index += 1) {
     const evaluationCase = cases[index]!;
     const result = await runCase(evaluationCase, casesDirectory, endpoint, timeoutMs);
     const succeeded = result.failures.length === 0;
     if (succeeded) passed += 1;
+    if (result.response) latencies.push(result.elapsedMs);
+    if (result.usage) usages.push(result.usage);
 
     console.log(
       `[${index + 1}/${cases.length}] ${succeeded ? "PASS" : "FAIL"} ${caseLabel(evaluationCase, index)} (${result.elapsedMs} ms)`,
@@ -505,6 +563,19 @@ async function main(): Promise<void> {
 
   const failed = cases.length - passed;
   console.log(`\nSummary: ${passed} passed, ${failed} failed, ${cases.length} total`);
+  if (latencies.length) {
+    console.log(`Latency:  median ${percentile(latencies, 0.5)} ms, p90 ${percentile(latencies, 0.9)} ms, max ${Math.max(...latencies)} ms`);
+  }
+  const input = usages.reduce((sum, usage) => sum + usage.inputTokens, 0);
+  const output = usages.reduce((sum, usage) => sum + usage.outputTokens, 0);
+  if (input || output) {
+    const costs = usages.map(estimateCost).filter((cost): cost is number => cost !== null);
+    const total = costs.reduce((sum, cost) => sum + cost, 0);
+    console.log(`Tokens:   ${input} input, ${output} output (${usages.reduce((sum, usage) => sum + usage.cacheReadTokens, 0)} cache reads)`);
+    if (costs.length) {
+      console.log(`Est cost: $${total.toFixed(4)} total, $${(total / costs.length).toFixed(4)} per analysis (list price upper bound)`);
+    }
+  }
   if (failed > 0) process.exitCode = 1;
 }
 

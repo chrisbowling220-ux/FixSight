@@ -10,6 +10,7 @@ import { useRouter } from "expo-router";
 import { useScanFlow } from "../src/state/ScanFlowContext";
 import type { Analysis, Diagnosis } from "../src/lib/contract";
 import { colors, radius, shadow } from "../src/theme";
+import { SafetyNotices, V5Details } from "../src/components/V5Details";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,8 @@ function DiagnosisCard({ d }: { d: Diagnosis }) {
           <Text style={cardStyles.bodyText}>{d.likely_cause}</Text>
         </Section>
       </View>
+
+      <V5Details d={d} />
 
       {/* Recommendations */}
       <View style={cardStyles.card}>
@@ -513,6 +516,7 @@ export default function ResultScreen() {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+      <SafetyNotices notices={analysis.safety_notices} />
       {analysis.result_type === "diagnosis" && analysis.diagnosis && (
         <DiagnosisCard d={analysis.diagnosis} />
       )}

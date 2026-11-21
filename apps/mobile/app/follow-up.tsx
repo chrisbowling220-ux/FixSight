@@ -33,14 +33,14 @@ export default function FollowUpScreen() {
     setSelections((prev) => ({ ...prev, [questionId]: option }));
   }
 
-  function buildAnswers(): ScanAnswer[] {
-    return questions
-      .filter((q) => selections[q.id] !== undefined)
-      .map((q) => ({
-        question_id: q.id,
-        question: q.question,
-        answer: selections[q.id] ?? "",
-      }));
+  // Every question is answered on submit. Sending none (or only some) made
+  // the server treat the request as a first round and ask again, looping.
+  function buildAnswers(skipAll = false): ScanAnswer[] {
+    return questions.map((q) => ({
+      question_id: q.id,
+      question: q.question,
+      answer: skipAll ? "Not sure - use your best judgment." : selections[q.id] ?? "Not sure",
+    }));
   }
 
   function handleContinue() {
@@ -50,7 +50,7 @@ export default function FollowUpScreen() {
   }
 
   function handleSkip() {
-    queueAnalysis([]);
+    queueAnalysis(buildAnswers(true));
     router.replace("/analyzing");
   }
 
