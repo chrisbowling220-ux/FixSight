@@ -367,6 +367,45 @@ test("the optional access code gates paid endpoints and is reported by health", 
   }
 });
 
+test("non-production Vercel deployments are locked to demo mode without provider keys", async () => {
+  const { createDiagnosisEngine } = await import("../src/usage-guard.js");
+  const { createVoiceService } = await import("../src/voice/index.js");
+  const keys = { ANTHROPIC_API_KEY: "sk-real-looking", ELEVENLABS_API_KEY: "el-real-looking" };
+
+  for (const environment of ["preview", "development", undefined]) {
+    const config = loadConfig({ ...keys, VERCEL: "1", ...(environment ? { VERCEL_ENV: environment } : {}) });
+    assert.equal(config.previewLockdown, true, `VERCEL_ENV=${environment}`);
+    assert.equal(config.demoMode, true);
+    assert.equal(config.anthropicApiKey, undefined, "Anthropic key is dropped");
+    assert.equal(config.voice.apiKey, undefined, "ElevenLabs key is dropped");
+    assert.ok(createDiagnosisEngine(config) instanceof DemoDiagnosisEngine);
+    assert.equal(createVoiceService(config.voice).status().available, false);
+  }
+
+  const production = loadConfig({ ...keys, VERCEL: "1", VERCEL_ENV: "production" });
+  assert.equal(production.previewLockdown, false);
+  assert.equal(production.demoMode, false);
+  assert.equal(production.anthropicApiKey, "sk-real-looking");
+  assert.equal(production.deploymentEnvironment, "production");
+
+  const local = loadConfig(keys);
+  assert.equal(local.previewLockdown, false, "local development is unaffected");
+  assert.equal(local.deploymentEnvironment, "local");
+
+  const optedIn = loadConfig({ ...keys, VERCEL: "1", VERCEL_ENV: "preview", FIXSIGHT_ALLOW_PAID_PREVIEW: "true" });
+  assert.equal(optedIn.demoMode, false, "explicit opt-in restores paid providers on a preview");
+
+  const { base, close } = await serve({ ...keys, VERCEL: "1", VERCEL_ENV: "preview" });
+  try {
+    const health = await (await fetch(`${base}/api/health`)).json() as Record<string, unknown>;
+    assert.equal(health.demo_mode, true);
+    assert.equal(health.environment, "preview");
+    assert.equal(health.paid_providers_enabled, false);
+  } finally {
+    await close();
+  }
+});
+
 test("the demo engine walks questions to diagnosis and covers every result type", async () => {
   const engine = new DemoDiagnosisEngine(0);
   const image = [{ data: "AAAA", media_type: "image/jpeg" }];

@@ -256,6 +256,9 @@ export function createApp({
       status: "ok",
       analysis_configured: config.demoMode || Boolean(config.anthropicApiKey),
       demo_mode: config.demoMode,
+      environment: config.deploymentEnvironment,
+      paid_providers_enabled:
+        !config.demoMode && (Boolean(config.anthropicApiKey) || Boolean(config.voice.apiKey)),
       access_code_required: Boolean(config.accessCode),
       model_id: config.demoMode ? "demo" : config.model,
       prompt_version: PROMPT_VERSION,

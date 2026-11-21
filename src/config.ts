@@ -42,6 +42,10 @@ export interface AppConfig {
   accessCode?: string;
   /** Deterministic sample results instead of the AI provider. Never paid. */
   demoMode: boolean;
+  /** "production", "preview", "development", "local", or "unknown". */
+  deploymentEnvironment: string;
+  /** True when a non-production Vercel deployment is locked to demo mode. */
+  previewLockdown: boolean;
   /** Simulated latency for demo results, so loading states are visible. */
   demoDelayMs: number;
   rateLimitWindowMs: number;
@@ -76,8 +80,18 @@ function effort(value: string | undefined): Effort {
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): AppConfig {
-  const apiKey = env.ANTHROPIC_API_KEY?.trim();
-  const elevenLabsKey = env.ELEVENLABS_API_KEY?.trim();
+  // Vercel sets VERCEL=1 and VERCEL_ENV on every deployment. Any Vercel
+  // deployment that is not production (previews, branch links) runs the demo
+  // engine and never holds provider keys, even when the Preview environment has
+  // keys configured, so a preview link cannot spend money. This fails closed: a
+  // Vercel deployment missing VERCEL_ENV is treated as non-production.
+  // FIXSIGHT_ALLOW_PAID_PREVIEW=true deliberately opts a preview back in.
+  const onVercel = env.VERCEL === "1";
+  const deploymentEnvironment = onVercel ? env.VERCEL_ENV?.trim() || "unknown" : "local";
+  const previewLockdown =
+    onVercel && deploymentEnvironment !== "production" && env.FIXSIGHT_ALLOW_PAID_PREVIEW !== "true";
+  const apiKey = previewLockdown ? undefined : env.ANTHROPIC_API_KEY?.trim();
+  const elevenLabsKey = previewLockdown ? undefined : env.ELEVENLABS_API_KEY?.trim();
   return {
     port: integer(env.PORT, 3000, "PORT"),
     host: env.HOST?.trim() || "0.0.0.0",
@@ -105,7 +119,9 @@ export function loadConfig(
     ...(env.FIXSIGHT_ACCESS_CODE?.trim()
       ? { accessCode: env.FIXSIGHT_ACCESS_CODE.trim() }
       : {}),
-    demoMode: env.FIXSIGHT_DEMO_MODE === "true",
+    demoMode: previewLockdown || env.FIXSIGHT_DEMO_MODE === "true",
+    deploymentEnvironment,
+    previewLockdown,
     demoDelayMs:
       env.FIXSIGHT_DEMO_DELAY_MS === "0"
         ? 0
