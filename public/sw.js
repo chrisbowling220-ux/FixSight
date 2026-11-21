@@ -1,7 +1,7 @@
 // FixSight service worker: makes the app open offline. Saved inspections live
 // in IndexedDB; this caches only the app's own files. API calls always go to
 // the network and are never cached.
-const VERSION = "fixsight-shell-2026-11-21-1";
+const VERSION = "fixsight-shell-2026-11-21-2";
 const SHELL = [
   "/",
   "/index.html",
@@ -59,17 +59,17 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Stale-while-revalidate for the app's static files.
+  // Network first, cache as the offline fallback. Serving cached modules
+  // while online could mix files from two releases after a deploy.
   event.respondWith(
-    caches.open(VERSION).then(async (cache) => {
-      const cached = await cache.match(request);
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) cache.put(request, response.clone());
-          return response;
-        })
-        .catch(() => cached);
-      return cached || network;
-    }),
+    fetch(request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(VERSION).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(async () => (await caches.match(request)) ?? Response.error()),
   );
 });

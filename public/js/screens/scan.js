@@ -36,6 +36,17 @@ function emptyDraft() {
 let draft = emptyDraft();
 let dictation = null;
 
+/** Saves unsaved photos as a draft before another flow replaces them. */
+async function parkCurrentDraft() {
+  if (draft.photos.length === 0) return;
+  try {
+    await persistDraft("draft");
+    toast("Your unsaved photos were kept as a draft.");
+  } catch {
+    /* best effort; the new flow still opens */
+  }
+}
+
 async function loadMode(query) {
   const retakeId = query.get("retake");
   const addId = query.get("add");
@@ -45,6 +56,7 @@ async function loadMode(query) {
   if (sourceId && draft.id !== sourceId) {
     const source = await db.get("inspections", sourceId);
     if (source) {
+      await parkCurrentDraft();
       draft = {
         id: source.id,
         photos: retakeId ? [] : structuredClone(source.photos ?? []),
@@ -59,6 +71,7 @@ async function loadMode(query) {
   } else if (parentId && draft.parentId !== parentId) {
     const parent = await db.get("inspections", parentId);
     if (parent) {
+      await parkCurrentDraft();
       draft = {
         ...emptyDraft(),
         category: parent.category ?? "",
@@ -293,6 +306,12 @@ async function addFiles(files, view) {
   syncButtons(view);
 }
 
+function storageMessage(error) {
+  return error?.name === "QuotaExceededError"
+    ? "This device is out of storage for FixSight. Export a backup and delete old inspections in Settings, then try again."
+    : `Couldn't save on this device: ${error?.message || "storage error"}`;
+}
+
 function syncButtons(view) {
   const hasPhotos = draft.photos.length > 0;
   $("#analyze-btn", view).disabled = !hasPhotos;
@@ -418,7 +437,13 @@ function wire(view, ctx) {
   });
 
   $("#save-draft", view).addEventListener("click", async () => {
-    const saved = await persistDraft("draft");
+    let saved;
+    try {
+      saved = await persistDraft("draft");
+    } catch (error) {
+      toast(storageMessage(error), { tone: "error", duration: 7000 });
+      return;
+    }
     draft = emptyDraft();
     toast("Draft saved on this device.");
     ctx.navigate(`/inspection/${saved.id}`);
@@ -432,7 +457,13 @@ function wire(view, ctx) {
 
   $("#analyze-btn", view).addEventListener("click", async () => {
     dictation?.stop();
-    const saved = await persistDraft("draft");
+    let saved;
+    try {
+      saved = await persistDraft("draft");
+    } catch (error) {
+      toast(storageMessage(error), { tone: "error", duration: 7000 });
+      return;
+    }
     draft = emptyDraft();
     if (!ctx.isOnline()) {
       toast("Saved as a draft. Open it from Drafts when you're back online.");
