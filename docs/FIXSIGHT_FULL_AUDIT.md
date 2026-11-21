@@ -50,3 +50,22 @@ Safety limitation: `applySafetyRules` in `src/diagnosis-contract.ts` adds strong
 The mobile history screen can now present an earlier locally linked scan and current photo for human comparison. This does not establish progress, compare unseen damage, or replace device testing. Existing SQLite remains device-local and may lose image access if a file copy fails; cloud durability and ownership remain release blockers.
 
 The mocked provider-boundary test includes 11 named repair categories and an insufficient-evidence response. The provider responses are synthetic, and the same blank generated image is used for all categories. Passing it does not establish model performance or replace a licensed photo corpus.
+
+## Status update — 2026-11-21 (Claude release-candidate branch)
+
+| Finding | Status |
+| --- | --- |
+| Critical — no production authentication | **Open, mitigated.** Web data is now device-local and `/api/analyze` stateless, so no customer data is held server-side by the web app. Paid endpoints gain an optional shared access code, a daily cap, and the existing rate limit. Real accounts remain an owner decision. |
+| Critical — volatile history | **Mitigated for the web app** (IndexedDB on device plus backup export/import). The mobile scan API repository is still in-memory and dev-only. |
+| High — dependency advisories | **Resolved for root** (sharp 0.35.5, audit 0). Mobile: 3 moderate in build tooling, upstream fix pending. |
+| High — false sensing claims | **Resolved.** Removed from the UI by Codex; prompt v5 now also drops the vision-mode instructions and forbids invented measurements. |
+| High — mobile diagnosis rejection | **Resolved** via the tolerant stored-record schema and legacy upgrader shared with the server contract. |
+| High — optional web category | **Resolved and browser-tested.** |
+| High — report safety omission | **Resolved** (share text and PDFs lead with safety notices and warnings). |
+| High — mobile install/toolchain | **Resolved** (SDK 58, Node 22, Doctor 20/20). |
+| Medium — contract drift | **Resolved** (generated mobile copies, synchronization test). |
+| Medium — no client deadline | **Resolved** (web 150 s with saved draft on timeout; mobile deadline). |
+| Medium — incomplete reports and features | **Largely resolved on web:** PDF reports, jobs, before/after, voice playback. Native voice and Expo jobs/reports remain open. |
+| Medium — docs/operations | **Resolved:** README and release readiness rewritten; Vercel packaging still needs a preview deploy. |
+
+New findings fixed in this session: Helmet's `upgrade-insecure-requests` blanked the app over local-network http (affects every phone/tablet test); a hidden loading overlay blocked all input; the mobile follow-up "Skip" looped back to the same questions; the low-confidence measurement rule rejected correct professional-only hazard answers; the demo/keyword hazard false positives were bounded by tests.

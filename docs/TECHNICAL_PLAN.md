@@ -1,3 +1,5 @@
+> Historical planning document from the initial build. For the current architecture and status see README.md and docs/FIXSIGHT_RELEASE_READINESS.md.
+
 # FixSight — Technical Plan (v1)
 
 **Status:** Prototype built; production architecture still ahead.

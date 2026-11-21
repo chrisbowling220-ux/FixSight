@@ -35,3 +35,16 @@ The existing device-local reinspection history now shows the saved earlier photo
 Final mobile bundle retry: SDK 58 iOS JavaScript export passed after an earlier timeout; Android export passed after the reinspection change. These are not native builds or device tests.
 
 Final root check passed: 92 TypeScript-suite tests and three web mock tests, typecheck and build. The added provider-boundary tests run 11 named synthetic categories and an insufficient-evidence response through a mocked Anthropic client with a generated blank image. They exercise validation, selected safety overrides and prompt/model metadata only; they do not evaluate model perception, diagnostic accuracy, latency or price. No live provider was called.
+
+## Claude release-candidate session — 2026-11-21
+
+Branch `claude/fixsight-release-candidate`, created from `codex/fixsight-full-upgrade` with the Codex working tree committed unmodified as `879a874` (also on `codex/fixsight-full-upgrade-wip-snapshot`). No deployment, no pushes, no paid AI or voice calls.
+
+Baseline: root `npm run check` passed (92 + 3 tests); root audit 1 high (sharp).
+
+1. **Contract v5 and prompt v5** (`13e0393`): observations separated from possible causes and limitations; repair steps, next inspection steps, cost and labor ranges with assumptions, maintenance, follow-up plan, photo requests, top-level safety notices. Photo roles/annotation flags and user measurements in requests. Prompt drops the obsolete simulated "vision mode" section. Deterministic hazard layer (`src/safety.ts`). Daily analysis cap, optional access code, opt-in refusal fallback, `max_tokens` 16,000, demo engine.
+2. **Web PWA rebuild** (`e0764c4`): inspections, results, customers/jobs, PDF reports, before/after, voice, IndexedDB storage, backup, legacy migration, service worker. sharp 0.35.5 (root audit 0). Browser testing found and fixed: an invisible overlay blocking all taps, a blank page over local-network http (CSP upgrade directive), accumulating listeners, stale disabled buttons after reconnecting, unlabelled fields.
+3. **Mobile and evaluation** (`a0fe6e8`): v5 result sections in the Expo app; follow-up skip loop fixed; camera plugin no longer adds microphone permissions; SDK 58 patch alignment (Doctor 20/20, typecheck, Android export). Evaluator reports latency/tokens/cost and refuses paid runs without `--confirm-paid`.
+4. **Review fixes** (`bb10750`): network-first service worker, storage-full messages, unsaved photos parked as drafts.
+
+Final verification: `npm run check` (149 tests) and `npm run test:e2e` (13 browser tests across phone, tablet, desktop, and WebKit) pass; Expo typecheck and Doctor pass. Physical devices and live AI were not tested. Details: `docs/FIXSIGHT_RELEASE_READINESS.md`.
