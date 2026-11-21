@@ -50,10 +50,19 @@ function base64Image() {
     });
 }
 
+export const IMAGE_ROLES = ["wide", "close_up", "detail", "other"] as const;
+
 const ImageInputSchema = z
   .object({
     data: base64Image(),
     media_type: z.enum(SUPPORTED_MEDIA_TYPES),
+    // How the photo frames the problem. A wide shot gives context, a close-up
+    // gives detail; telling the model which is which stops it reading scale or
+    // extent from the wrong frame.
+    role: z.enum(IMAGE_ROLES).optional(),
+    // True when the user drew marks on the photo to point at the problem. The
+    // model is told the marks are annotations, not damage.
+    annotated: z.boolean().optional(),
   })
   .strict();
 
@@ -110,6 +119,20 @@ const HumidityReadingSchema = z
   })
   .strict();
 
+export const LENGTH_UNITS = ["mm", "cm", "m", "in", "ft"] as const;
+
+// A user-measured dimension (crack width, stain diameter, gap size). Photos
+// carry no reliable scale, so measurements only ever come from the user.
+const DimensionReadingSchema = z
+  .object({
+    kind: z.literal("dimension"),
+    what: z.string().trim().min(1).max(120),
+    value: z.number().finite().gt(0).max(100_000),
+    unit: z.enum(LENGTH_UNITS),
+    location: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
 // Every member stays a plain object. Wrapping one in .refine() turns it into an
 // effects schema, and inferring the union through the enclosing request type
 // then costs enough to exhaust the compiler's heap — so the one cross-field
@@ -118,6 +141,7 @@ const ReadingSchema = z.discriminatedUnion("kind", [
   MoistureReadingSchema,
   TemperatureReadingSchema,
   HumidityReadingSchema,
+  DimensionReadingSchema,
 ]);
 
 export const AnswerSchema = z

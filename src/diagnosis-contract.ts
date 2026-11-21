@@ -1,6 +1,20 @@
 import { z } from "zod";
 import { BaseAnalysisSchema, DiagnosisSchema, FollowUpQuestionSchema, PROFESSIONAL_TYPES } from "./diagnosis-wire.js";
-export { BaseAnalysisSchema, DiagnosisSchema, FollowUpQuestionSchema, INSTRUMENTS, NextMeasurementSchema, PROFESSIONAL_TYPES, RecommendationSchema } from "./diagnosis-wire.js";
+import { detectInputHazards, detectOutputHazards, type HazardMatch } from "./safety.js";
+export {
+  BaseAnalysisSchema,
+  CostEstimateSchema,
+  DiagnosisSchema,
+  FollowUpQuestionSchema,
+  INSTRUMENTS,
+  LaborEstimateSchema,
+  NextMeasurementSchema,
+  PossibleCauseSchema,
+  PROFESSIONAL_TYPES,
+  RecommendationSchema,
+  StoredAnalysisSchema,
+  upgradeStoredAnalysis,
+} from "./diagnosis-wire.js";
 
 export const AnalysisSchema = BaseAnalysisSchema.superRefine((analysis, context) => {
   const issue = (message: string, path: Array<string | number>) => {
@@ -65,11 +79,41 @@ export const AnalysisSchema = BaseAnalysisSchema.superRefine((analysis, context)
   if (diagnosis) {
     // Low confidence with no proposed way to resolve it is the exact failure
     // this field exists to fix, so it is required rather than encouraged.
-    if (diagnosis.confidence < 0.7 && diagnosis.next_measurement === null) {
+    // Exempt hazardous professional-only work: the prompt forbids measurements
+    // near energized, gas, or structurally unsafe areas, and the safety layer
+    // clears any it receives, so requiring one would reject a correct answer.
+    const hazardousReferral =
+      diagnosis.recommendation.difficulty === "pro-only" &&
+      diagnosis.professional_type !== null &&
+      ["electrician", "gas_technician", "structural_engineer", "foundation_specialist"].includes(
+        diagnosis.professional_type,
+      );
+    if (diagnosis.confidence < 0.7 && diagnosis.next_measurement === null && !hazardousReferral) {
       issue(
         "A diagnosis below 0.70 confidence must propose a next measurement.",
         ["diagnosis", "next_measurement"],
       );
+    }
+    for (const [key, range] of [
+      ["diy_materials", diagnosis.cost_estimate.diy_materials],
+      ["professional_total", diagnosis.cost_estimate.professional_total],
+    ] as const) {
+      if (range && range.low > range.high) {
+        issue("A cost range must not have its low end above its high end.", [
+          "diagnosis",
+          "cost_estimate",
+          key,
+        ]);
+      }
+    }
+    if (
+      diagnosis.labor_estimate &&
+      diagnosis.labor_estimate.hours_low > diagnosis.labor_estimate.hours_high
+    ) {
+      issue("A labor range must not have its low end above its high end.", [
+        "diagnosis",
+        "labor_estimate",
+      ]);
     }
     // Every reason to scan a wall is a prelude to making a hole in it.
     if (
@@ -132,7 +176,46 @@ export function normalizeAnalysis(value: unknown): unknown {
       break;
   }
 
+  if (analysis.result_type === "diagnosis") {
+    analysis.diagnosis = normalizeDiagnosis(analysis.diagnosis);
+  }
   return analysis;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function orderedRange(value: unknown, lowKey: string, highKey: string): unknown {
+  if (!isRecord(value)) return value;
+  const low = value[lowKey];
+  const high = value[highKey];
+  if (typeof low === "number" && typeof high === "number" && low > high) {
+    return { ...value, [lowKey]: high, [highKey]: low };
+  }
+  return value;
+}
+
+/**
+ * Repairs mechanical slips that would otherwise discard a paid, otherwise valid
+ * diagnosis: a reversed range, or a referral that forgot to name the trade.
+ * Nothing substantive is invented — the substitutes are the neutral values.
+ */
+function normalizeDiagnosis(value: unknown): unknown {
+  if (!isRecord(value)) return value;
+  const diagnosis = { ...value };
+  if (diagnosis.needs_professional === true && diagnosis.professional_type === null) {
+    diagnosis.professional_type = "other";
+  }
+  if (isRecord(diagnosis.cost_estimate)) {
+    diagnosis.cost_estimate = {
+      ...diagnosis.cost_estimate,
+      diy_materials: orderedRange(diagnosis.cost_estimate.diy_materials, "low", "high"),
+      professional_total: orderedRange(diagnosis.cost_estimate.professional_total, "low", "high"),
+    };
+  }
+  diagnosis.labor_estimate = orderedRange(diagnosis.labor_estimate, "hours_low", "hours_high");
+  return diagnosis;
 }
 
 const SAFETY_OVERRIDES: Partial<
@@ -146,44 +229,131 @@ const SAFETY_OVERRIDES: Partial<
     "Possible structural movement cannot be cleared from a photo. Avoid loading or altering the area until a qualified professional evaluates it.",
 };
 
-export function applySafetyRules(analysis: Analysis): Analysis {
+export interface SafetyContext {
+  /** The user's free-text description. */
+  description?: string | undefined;
+  /** The user's follow-up answers, verbatim. */
+  answers?: readonly string[] | undefined;
+}
+
+const MAX_SAFETY_NOTICES = 6;
+const MAX_SAFETY_WARNINGS = 10;
+
+function mergeUnique(first: readonly string[], second: readonly string[], limit: number): string[] {
+  const merged: string[] = [];
+  for (const item of [...first, ...second]) {
+    if (!merged.includes(item)) merged.push(item);
+  }
+  return merged.slice(0, limit);
+}
+
+/**
+ * Advice the result itself says is not DIY-safe must not ship with DIY steps,
+ * a DIY shopping list, or a DIY materials price — the combination reads as
+ * permission. Also used after a safety override has flipped safe_to_diy.
+ */
+function enforceDiyConsistency(diagnosis: Diagnosis): Diagnosis {
+  if (diagnosis.safe_to_diy) return diagnosis;
+  return {
+    ...diagnosis,
+    recommendation: {
+      ...diagnosis.recommendation,
+      repair_steps: [],
+      tools_or_parts: [],
+    },
+    cost_estimate: {
+      ...diagnosis.cost_estimate,
+      diy_materials: null,
+    },
+  };
+}
+
+function professionalOverride(diagnosis: Diagnosis, warnings: readonly string[]): Diagnosis {
+  return enforceDiyConsistency({
+    ...diagnosis,
+    safe_to_diy: false,
+    needs_professional: true,
+    professional_type: diagnosis.professional_type ?? "other",
+    disclaimer_required: true,
+    recommendation: {
+      ...diagnosis.recommendation,
+      difficulty: "pro-only",
+    },
+    safety_warnings: mergeUnique(warnings, diagnosis.safety_warnings, MAX_SAFETY_WARNINGS),
+    // Sending someone to take a reading at a spot this response just declared
+    // hazardous is a direct contradiction, and the safety override wins. This
+    // runs after parseAnalysis, so clearing it cannot trip the low-confidence
+    // rule that required it.
+    next_measurement: null,
+  });
+}
+
+function outputHazards(diagnosis: Diagnosis): HazardMatch[] {
+  return detectOutputHazards(
+    diagnosis.subject,
+    diagnosis.diagnosis,
+    diagnosis.likely_cause,
+    ...diagnosis.observations,
+  );
+}
+
+/**
+ * Deterministic safety layer applied to every validated analysis.
+ *
+ * 1. Hazards in the user's own words become top-level safety notices on any
+ *    result type, so a gas smell is addressed even when the photo is unusable.
+ * 2. A diagnosis is forced to professional-only handling when the model chose
+ *    a hazardous professional type, rated it urgent, described a hazard in its
+ *    own findings, or the user described one.
+ * 3. A diagnosis that is not DIY-safe never carries DIY steps or DIY costs.
+ */
+export function applySafetyRules(analysis: Analysis, context: SafetyContext = {}): Analysis {
+  const inputHazards = detectInputHazards(context.description, ...(context.answers ?? []));
+  const safetyNotices = mergeUnique(
+    analysis.safety_notices,
+    inputHazards.map((hazard) => hazard.notice),
+    MAX_SAFETY_NOTICES,
+  );
+
   const diagnosis = analysis.diagnosis;
-  if (!diagnosis) return analysis;
+  if (!diagnosis) {
+    return { ...analysis, safety_notices: safetyNotices };
+  }
 
   const professionalWarning = diagnosis.professional_type
     ? SAFETY_OVERRIDES[diagnosis.professional_type]
     : undefined;
   const urgentOverride =
     diagnosis.urgency === "urgent" || diagnosis.severity >= 9;
+  const hazards = [...inputHazards, ...outputHazards(diagnosis)];
+  const forcingHazards = hazards.filter((hazard) => hazard.forcesProfessional);
+  const advisoryWarnings = hazards
+    .filter((hazard) => !hazard.forcesProfessional)
+    .map((hazard) => hazard.warning);
 
-  if (!professionalWarning && !urgentOverride) return analysis;
+  const overrideWarnings = mergeUnique(
+    [
+      ...(professionalWarning ? [professionalWarning] : []),
+      ...forcingHazards.map((hazard) => hazard.warning),
+    ],
+    [],
+    MAX_SAFETY_WARNINGS,
+  );
+  if (overrideWarnings.length === 0 && urgentOverride) {
+    overrideWarnings.push(
+      "This appears urgent. Avoid disturbing the area and arrange prompt professional assessment.",
+    );
+  }
 
-  const warning =
-    professionalWarning ??
-    "This appears urgent. Avoid disturbing the area and arrange prompt professional assessment.";
-  const safetyWarnings = diagnosis.safety_warnings.includes(warning)
-    ? diagnosis.safety_warnings
-    : [warning, ...diagnosis.safety_warnings];
-
-  return {
-    ...analysis,
-    diagnosis: {
-      ...diagnosis,
-      safe_to_diy: false,
-      needs_professional: true,
-      disclaimer_required: true,
-      recommendation: {
-        ...diagnosis.recommendation,
-        difficulty: "pro-only",
-      },
-      safety_warnings: safetyWarnings,
-      // Sending someone to take a reading at a spot this response just declared
-      // hazardous is a direct contradiction, and the safety override wins. This
-      // runs after parseAnalysis, so clearing it cannot trip the low-confidence
-      // rule that required it.
-      next_measurement: null,
-    },
+  let next: Diagnosis = {
+    ...diagnosis,
+    safety_warnings: mergeUnique(diagnosis.safety_warnings, advisoryWarnings, MAX_SAFETY_WARNINGS),
   };
+  next = overrideWarnings.length > 0
+    ? professionalOverride(next, overrideWarnings)
+    : enforceDiyConsistency(next);
+
+  return { ...analysis, safety_notices: safetyNotices, diagnosis: next };
 }
 
 const generatedJsonSchema = z.toJSONSchema(BaseAnalysisSchema, {

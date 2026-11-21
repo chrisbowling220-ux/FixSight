@@ -9,11 +9,12 @@
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/diagnosis-contract.test.ts test/scans-workflow.test.ts test/voice.test.ts test/ai-mock.test.ts && node --test test/web-voice.test.cjs test/web-analyze.test.cjs",
+    "test": "tsx --test test/diagnosis-contract.test.ts test/scans-workflow.test.ts test/voice.test.ts test/ai-mock.test.ts test/v5-safety-and-guards.test.ts && node --test test/web-voice.test.cjs test/web-analyze.test.cjs",
     "eval": "tsx scripts/evaluate.ts",
     "verify:voice": "tsx scripts/verify-voice.ts",
     "check": "npm run typecheck && npm test && npm run build",
-    "sync:contract": "tsx scripts/sync-contract.ts"
+    "sync:contract": "tsx scripts/sync-contract.ts",
+    "demo": "tsx scripts/demo.ts"
   },
   "engines": {
     "node": ">=20"

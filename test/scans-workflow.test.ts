@@ -19,6 +19,7 @@ import {
   createScanRouter,
   InMemoryScanRepository,
 } from "../src/scans/index.js";
+import { V5_DIAGNOSIS_FIELDS } from "./fixtures.js";
 
 const IMAGE_DATA = Buffer.from([0xff, 0xd8, 0xff, 0xdb]).toString("base64");
 const REQUEST_BODY = {
@@ -60,6 +61,7 @@ const QUESTIONS = parseAnalysis({
     },
   ],
   diagnosis: null,
+  safety_notices: [],
 });
 
 const DIAGNOSIS = parseAnalysis({
@@ -79,8 +81,9 @@ const DIAGNOSIS = parseAnalysis({
     recommendation: {
       best_fix: "Stop the leak source and dry the ceiling cavity before repair",
       cheap_or_temp_fix: "Avoid using the fixture above until it is inspected",
-      tools_or_parts: ["moisture meter"],
+      tools_or_parts: [],
       difficulty: "pro-only",
+      repair_steps: [],
     },
     risk_if_ignored: "Continued moisture can damage framing and support mold growth",
     needs_professional: true,
@@ -88,7 +91,10 @@ const DIAGNOSIS = parseAnalysis({
     safety_warnings: ["Keep people away if the ceiling is sagging."],
     disclaimer_required: true,
     next_measurement: null,
+    ...V5_DIAGNOSIS_FIELDS,
+    cost_estimate: { ...V5_DIAGNOSIS_FIELDS.cost_estimate, diy_materials: null },
   },
+  safety_notices: [],
 });
 
 function result(analysis: Analysis, suffix = "initial"): AnalysisResult {
@@ -320,7 +326,7 @@ test("report generation is deterministic and resolving a diagnosis uses no extra
   assert.match(String(report.share_text), /dry reference 8\.5/);
   assert.match(String(report.share_text), /Safety warning: Keep people away if the ceiling is sagging/);
   assert.match(String(report.share_text), /Temporary option: Avoid using the fixture/);
-  assert.match(String(report.share_text), /Tools and materials: moisture meter/);
+  assert.match(String(report.share_text), /Estimated professional cost: \$125–\$275 \(planning range, not a quote\)/);
 
   const resolvedResponse = await apiFetch(
     api.baseUrl,

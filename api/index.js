@@ -6,17 +6,12 @@ import path from "node:path";
 
 import { createApp } from "../dist/app.js";
 import { loadConfig } from "../dist/config.js";
-import {
-  AnthropicDiagnosisEngine,
-  UnavailableDiagnosisEngine,
-} from "../dist/diagnosis-engine.js";
+import { createDiagnosisEngine } from "../dist/usage-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config = loadConfig();
-const engine = config.anthropicApiKey
-  ? new AnthropicDiagnosisEngine(config)
-  : new UnavailableDiagnosisEngine();
+const engine = createDiagnosisEngine(config);
 
 export default createApp({
   config,

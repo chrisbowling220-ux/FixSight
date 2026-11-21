@@ -22,6 +22,28 @@ export interface AppConfig {
   model: string;
   effort: Effort;
   maxTokens: number;
+  /**
+   * Optional server-side refusal fallback (beta). Unset by default: it has not
+   * been exercised against the live API in this project, and an unaccepted beta
+   * parameter would fail every scan.
+   */
+  refusalFallbackModel?: string;
+  /**
+   * Per-instance daily backstop on paid analyses. Like the voice caps it is a
+   * runaway-loop guard, not a billing limit — set a spend limit on the provider
+   * account for that.
+   */
+  analysisDailyCap: number;
+  /**
+   * Optional shared access code. When set, every paid endpoint requires the
+   * `x-fixsight-access-code` header. A stop-gap against anonymous spend on a
+   * public URL — not user authentication.
+   */
+  accessCode?: string;
+  /** Deterministic sample results instead of the AI provider. Never paid. */
+  demoMode: boolean;
+  /** Simulated latency for demo results, so loading states are visible. */
+  demoDelayMs: number;
   rateLimitWindowMs: number;
   rateLimitMax: number;
   trustProxy: boolean;
@@ -64,11 +86,30 @@ export function loadConfig(
     // targets, and it is the whole product here. Opus 4.6 caps at 1568px.
     model: env.FIXSIGHT_MODEL?.trim() || "claude-opus-5",
     effort: effort(env.FIXSIGHT_EFFORT),
+    // Adaptive thinking shares this ceiling with the JSON answer. The v5 schema
+    // is larger than v4, and 8,192 risked truncation (stop_reason max_tokens),
+    // which discards a paid response. Billing follows tokens actually used.
     maxTokens: integer(
       env.FIXSIGHT_MAX_TOKENS,
-      8_192,
+      16_000,
       "FIXSIGHT_MAX_TOKENS",
     ),
+    ...(env.FIXSIGHT_REFUSAL_FALLBACK_MODEL?.trim()
+      ? { refusalFallbackModel: env.FIXSIGHT_REFUSAL_FALLBACK_MODEL.trim() }
+      : {}),
+    analysisDailyCap: integer(
+      env.ANALYSIS_DAILY_CAP,
+      300,
+      "ANALYSIS_DAILY_CAP",
+    ),
+    ...(env.FIXSIGHT_ACCESS_CODE?.trim()
+      ? { accessCode: env.FIXSIGHT_ACCESS_CODE.trim() }
+      : {}),
+    demoMode: env.FIXSIGHT_DEMO_MODE === "true",
+    demoDelayMs:
+      env.FIXSIGHT_DEMO_DELAY_MS === "0"
+        ? 0
+        : integer(env.FIXSIGHT_DEMO_DELAY_MS, 900, "FIXSIGHT_DEMO_DELAY_MS"),
     rateLimitWindowMs: integer(
       env.RATE_LIMIT_WINDOW_MS,
       15 * 60 * 1_000,

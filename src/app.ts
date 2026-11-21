@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -66,6 +66,54 @@ function analyzeHandler(engine: DiagnosisEngine): RequestHandler {
     } catch (error) {
       next(error);
     }
+  };
+}
+
+function digest(value: string): Buffer {
+  return createHash("sha256").update(value, "utf8").digest();
+}
+
+/**
+ * Optional shared-code gate for paid endpoints. Off unless FIXSIGHT_ACCESS_CODE
+ * is set. It keeps an anonymous visitor to a public URL from spending provider
+ * credit; it is not per-user authentication and does not isolate data.
+ */
+export function accessCodeGuard(code: string | undefined): RequestHandler {
+  if (!code) return (_request, _response, next) => next();
+  const expected = digest(code);
+  return (request, response, next) => {
+    const supplied = request.header("x-fixsight-access-code") ?? "";
+    if (supplied !== "" && timingSafeEqual(digest(supplied), expected)) {
+      next();
+      return;
+    }
+    response.status(401).json({
+      error: "This FixSight server needs an access code. Enter it in Settings.",
+      code: "access_code_required",
+    });
+  };
+}
+
+function chain(...handlers: RequestHandler[]): RequestHandler {
+  return (request, response, next) => {
+    let index = 0;
+    const step = (error?: unknown): void => {
+      if (error !== undefined) {
+        next(error);
+        return;
+      }
+      const handler = handlers[index++];
+      if (!handler) {
+        next();
+        return;
+      }
+      try {
+        handler(request, response, step);
+      } catch (thrown) {
+        next(thrown);
+      }
+    };
+    step();
   };
 }
 
@@ -193,8 +241,10 @@ export function createApp({
     response.setHeader("cache-control", "no-store");
     response.json({
       status: "ok",
-      analysis_configured: Boolean(config.anthropicApiKey),
-      model_id: config.model,
+      analysis_configured: config.demoMode || Boolean(config.anthropicApiKey),
+      demo_mode: config.demoMode,
+      access_code_required: Boolean(config.accessCode),
+      model_id: config.demoMode ? "demo" : config.model,
       prompt_version: PROMPT_VERSION,
     });
   });
@@ -210,6 +260,8 @@ export function createApp({
     },
   });
   const analyze = analyzeHandler(engine);
+  const guard = accessCodeGuard(config.accessCode);
+  const paid = chain(guard, limiter);
 
   const repository = new InMemoryScanRepository();
   const currentUserId = createDevUserIdResolver();
@@ -217,13 +269,28 @@ export function createApp({
 
   // The voice router applies `limiter` itself, but only to its paid POST routes
   // — `/api/voice/status` is a cheap poll and stays unmetered.
-  const voiceRouter = createVoiceRouter(createVoiceService(config.voice), limiter);
+  const voiceRouter = createVoiceRouter(createVoiceService(config.voice), paid);
 
-  app.post("/api/analyze", limiter, analyze);
-  app.use("/api/v1/scans", limiter, scanRouter);
+  app.post("/api/analyze", paid, analyze);
+  app.use("/api/v1/scans", paid, scanRouter);
   app.use("/api/voice", voiceRouter);
 
-  app.use(express.static(publicDir, { index: "index.html", maxAge: 0 }));
+  app.use(
+    express.static(publicDir, {
+      index: "index.html",
+      maxAge: 0,
+      setHeaders(response, filePath) {
+        // The service worker must always be revalidated so updates reach users.
+        if (filePath.endsWith("sw.js")) {
+          response.setHeader("cache-control", "no-cache");
+          response.setHeader("service-worker-allowed", "/");
+        }
+        if (filePath.endsWith(".webmanifest")) {
+          response.setHeader("content-type", "application/manifest+json");
+        }
+      },
+    }),
+  );
 
   app.use("/api", (_request, response) => {
     response.status(404).json({

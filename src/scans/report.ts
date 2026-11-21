@@ -52,17 +52,54 @@ function shareText(scan: StoredScan): string {
 
   const next = diagnosis.next_measurement;
 
+  const cost = diagnosis.cost_estimate;
+  const money = (range: { low: number; high: number } | null) =>
+    range ? `$${range.low.toLocaleString("en-US")}–$${range.high.toLocaleString("en-US")}` : null;
+  const diyCost = money(cost.diy_materials);
+  const proCost = money(cost.professional_total);
+  const labor = diagnosis.labor_estimate;
+
   return [
     heading,
+    ...analysis.safety_notices.map((notice) => `SAFETY NOTICE: ${notice}`),
     `Subject: ${diagnosis.subject}`,
     `Assessment: ${diagnosis.diagnosis}`,
+    ...(diagnosis.observations.length
+      ? ["Observed in the photos:", ...diagnosis.observations.map((item) => `  - ${item}`)]
+      : []),
     `Likely cause: ${diagnosis.likely_cause}`,
+    ...(diagnosis.possible_causes.length
+      ? [
+          "Possible causes (not confirmed):",
+          ...diagnosis.possible_causes.map(
+            (item) => `  - ${item.cause} (${item.likelihood.replace(/_/g, " ")})`,
+          ),
+        ]
+      : []),
+    ...(diagnosis.limitations.length
+      ? [`What the photos cannot show: ${diagnosis.limitations.join("; ")}`]
+      : []),
     `Severity: ${diagnosis.severity}/10 (${diagnosis.urgency})`,
     `Confidence: ${Math.round(diagnosis.confidence * 100)}%`,
     ...readingLines(scan.request.readings),
     ...diagnosis.safety_warnings.map((warning) => `Safety warning: ${warning}`),
     `Recommended fix: ${diagnosis.recommendation.best_fix}`,
     `Temporary option: ${diagnosis.recommendation.cheap_or_temp_fix}`,
+    ...(diagnosis.recommendation.repair_steps.length
+      ? [
+          "Repair steps:",
+          ...diagnosis.recommendation.repair_steps.map((step, index) => `  ${index + 1}. ${step}`),
+        ]
+      : []),
+    ...(diagnosis.next_inspection_steps.length
+      ? [`Next inspection steps: ${diagnosis.next_inspection_steps.join("; ")}`]
+      : []),
+    ...(diyCost ? [`Estimated DIY materials: ${diyCost} (planning range, not a quote)`] : []),
+    ...(proCost ? [`Estimated professional cost: ${proCost} (planning range, not a quote)`] : []),
+    ...(labor
+      ? [`Estimated labor: ${String(labor.hours_low)}–${String(labor.hours_high)} hours (${labor.who})`]
+      : []),
+    ...(diyCost || proCost || labor ? [`Estimate assumptions: ${cost.assumptions.join("; ")}`] : []),
     ...(diagnosis.recommendation.tools_or_parts.length
       ? [`Tools and materials: ${diagnosis.recommendation.tools_or_parts.join("; ")}`]
       : []),
@@ -98,6 +135,9 @@ function readingLines(readings: readonly Reading[]): string[] {
               }`
             : ", no dry reference supplied";
         return `  Moisture at ${reading.location}: ${measured}${reference}`;
+      }
+      if (reading.kind === "dimension") {
+        return `  Measured ${reading.what} at ${reading.location}: ${String(reading.value)} ${reading.unit}`;
       }
       if (reading.kind === "temperature") {
         return `  Temperature at ${reading.location}: ${String(reading.value)}°${reading.unit.toUpperCase()}`;

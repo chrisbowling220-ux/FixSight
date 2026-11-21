@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { loadConfig } from "../src/config.js";
 import { AnthropicDiagnosisEngine } from "../src/diagnosis-engine.js";
 import { parseAnalyzeRequest } from "../src/request-schema.js";
+import { V5_DIAGNOSIS_FIELDS } from "./fixtures.js";
 
 const scenarios = [
   ["Water damage and hidden leaks", "plumber"], ["Cracked drywall", "general_contractor"],
@@ -15,13 +16,14 @@ const scenarios = [
 
 const mockDiagnosis = (professional: string) => ({
   result_type: "diagnosis", note: "A photo cannot confirm the cause.", image_quality: "good",
-  retake_guidance: [], follow_up_questions: [],
+  retake_guidance: [], follow_up_questions: [], safety_notices: [],
   diagnosis: {
     subject: "test subject", diagnosis: "An uncertain visible issue", likely_cause: "Several causes are possible",
     severity: 4, urgency: "soon", confidence: 0.8, safe_to_diy: true,
-    recommendation: { best_fix: "Arrange an inspection", cheap_or_temp_fix: "Avoid disturbing the area", tools_or_parts: [], difficulty: "moderate" },
+    recommendation: { best_fix: "Arrange an inspection", cheap_or_temp_fix: "Avoid disturbing the area", tools_or_parts: [], difficulty: "moderate", repair_steps: [] },
     risk_if_ignored: "The condition may worsen", needs_professional: false, professional_type: professional,
     safety_warnings: [], disclaimer_required: false, next_measurement: null,
+    ...V5_DIAGNOSIS_FIELDS,
   },
 });
 
@@ -53,7 +55,7 @@ test("mocked provider scenarios exercise safety overrides and preserve version m
 test("mocked provider may decline to assess insufficient evidence", async () => {
   const data = (await sharp({ create: { width: 16, height: 16, channels: 3, background: "white" } }).jpeg().toBuffer()).toString("base64");
   const calls: unknown[] = [];
-  const engine = fakeEngine({ result_type: "cannot_assess", note: "Evidence is insufficient.", image_quality: "usable", retake_guidance: [], follow_up_questions: [], diagnosis: null }, calls);
+  const engine = fakeEngine({ result_type: "cannot_assess", note: "Evidence is insufficient.", image_quality: "usable", retake_guidance: [], follow_up_questions: [], diagnosis: null, safety_notices: [] }, calls);
   const result = await engine.analyze(parseAnalyzeRequest({ images: [{ data, media_type: "image/jpeg" }] }));
   assert.equal(result.analysis.result_type, "cannot_assess");
   assert.equal(result.analysis.diagnosis, null);

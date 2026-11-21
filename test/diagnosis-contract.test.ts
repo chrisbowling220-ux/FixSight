@@ -10,6 +10,7 @@ import {
 } from "../src/diagnosis-contract.js";
 import { parseAnalysis as parseMobileAnalysis, AnalyzeRequestSchema as MobileRequestSchema } from "../apps/mobile/src/lib/contract.js";
 import { parseAnalyzeRequest } from "../src/request-schema.js";
+import { V5_DIAGNOSIS_FIELDS, V5_REPAIR_STEPS } from "./fixtures.js";
 
 const VALID_DIAGNOSIS = {
   subject: "bathroom sink supply line",
@@ -24,6 +25,7 @@ const VALID_DIAGNOSIS = {
     cheap_or_temp_fix: "Gently tighten the compression nut after shutting off the water",
     tools_or_parts: ["adjustable wrench", "replacement ferrule"],
     difficulty: "moderate",
+    repair_steps: V5_REPAIR_STEPS,
   },
   risk_if_ignored: "The leak can damage the vanity and surrounding floor",
   needs_professional: false,
@@ -31,6 +33,7 @@ const VALID_DIAGNOSIS = {
   safety_warnings: [],
   disclaimer_required: true,
   next_measurement: null,
+  ...V5_DIAGNOSIS_FIELDS,
 } as const;
 
 const VALID_ANALYSIS = {
@@ -40,6 +43,7 @@ const VALID_ANALYSIS = {
   retake_guidance: [],
   follow_up_questions: [],
   diagnosis: VALID_DIAGNOSIS,
+  safety_notices: [],
 } as const;
 
 const JPEG_BASE64 = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43]).toString(
@@ -121,6 +125,7 @@ test("parseAnalysis accepts questions, retake, and cannot-assess responses", asy
         },
       ],
       diagnosis: null,
+      safety_notices: [],
     };
 
     assert.deepEqual(parseAnalysis(value), value);
@@ -135,6 +140,7 @@ test("parseAnalysis accepts questions, retake, and cannot-assess responses", asy
       retake_guidance: ["Turn on a light", "Move closer to the affected area"],
       follow_up_questions: [],
       diagnosis: null,
+      safety_notices: [],
     };
 
     assert.deepEqual(parseAnalysis(value), value);
@@ -149,6 +155,7 @@ test("parseAnalysis accepts questions, retake, and cannot-assess responses", asy
       retake_guidance: [],
       follow_up_questions: [],
       diagnosis: null,
+      safety_notices: [],
     };
 
     assert.deepEqual(parseAnalysis(value), value);
@@ -530,6 +537,7 @@ test("normalizeAnalysis clears arrays the result_type forbids", async (t) => {
         },
       ],
       diagnosis: null,
+      safety_notices: [],
     };
 
     const parsed = parseAnalysis(normalizeAnalysis(questions));

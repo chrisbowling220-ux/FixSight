@@ -14,7 +14,7 @@ import {
 } from "./errors.js";
 import { prepareImages } from "./image-processing.js";
 import { PROMPT_VERSION, SYSTEM_PROMPT } from "./prompt.js";
-import type { AnalyzeRequest, EvidenceInput } from "./request-schema.js";
+import type { AnalyzeRequest, EvidenceInput, ImageInput } from "./request-schema.js";
 
 export interface AnalysisMetadata {
   model_id: string;
@@ -52,7 +52,26 @@ function evidenceLabel(evidence: EvidenceInput, index: number): string {
   return `Evidence image ${index + 1}. ${EVIDENCE_LABELS[evidence.kind]}${where}`;
 }
 
+const ROLE_LABELS: Record<NonNullable<ImageInput["role"]>, string> = {
+  wide: "wide shot showing context and extent",
+  close_up: "close-up of the problem area",
+  detail: "detail view",
+  other: "additional view",
+};
+
+/** Labels a visible photo with its framing and whether the user marked it. */
+export function photoLabel(image: ImageInput, index: number, total: number): string {
+  const role = image.role ? ` (${ROLE_LABELS[image.role]})` : "";
+  const marks = image.annotated
+    ? " The user drew marks on this photo to point at the area of concern; the marks are annotations, not damage."
+    : "";
+  return `Photo ${index + 1} of ${total}${role}.${marks}`;
+}
+
 function contextText(request: AnalyzeRequest): string {
+  // vision_mode is accepted from older clients for compatibility but no longer
+  // forwarded: the filtered images it described are no longer sent, and the
+  // filters never measured heat or moisture.
   const context: Record<string, unknown> = {
     category: request.category ?? null,
     description: request.description ?? null,
@@ -60,9 +79,6 @@ function contextText(request: AnalyzeRequest): string {
     follow_up_answers: request.answers,
     answers_already_provided: request.answers.length > 0,
   };
-  if (request.vision_mode) {
-    context.vision_mode = request.vision_mode;
-  }
 
   return [
     "Analyze the attached image or images.",
@@ -71,7 +87,13 @@ function contextText(request: AnalyzeRequest): string {
   ].join("\n\n");
 }
 
-function extractText(response: Anthropic.Messages.Message): string {
+/** The fields read from either the standard or the beta (fallback) response. */
+type ProviderResponse = Pick<
+  Anthropic.Messages.Message | Anthropic.Beta.Messages.BetaMessage,
+  "content" | "stop_reason" | "usage" | "model"
+>;
+
+function extractText(response: ProviderResponse): string {
   const block = response.content.find((item) => item.type === "text");
   if (!block || block.type !== "text" || block.text.trim() === "") {
     throw new ProviderResponseError(
@@ -82,10 +104,12 @@ function extractText(response: Anthropic.Messages.Message): string {
 }
 
 function metadata(
-  response: Anthropic.Messages.Message,
+  response: ProviderResponse,
   model: string,
 ): AnalysisMetadata {
-  const usage = response.usage as Anthropic.Messages.Usage & {
+  const usage = response.usage as {
+    input_tokens: number;
+    output_tokens: number;
     cache_creation_input_tokens?: number;
     cache_read_input_tokens?: number;
   };
@@ -132,7 +156,16 @@ export class AnthropicDiagnosisEngine implements DiagnosisEngine {
     );
 
     const content: Anthropic.Messages.ContentBlockParam[] = [
-      ...images.map(imageBlock),
+      // Each label precedes its photo so the model reads the framing first.
+      ...images.flatMap(
+        (prepared, index): Anthropic.Messages.ContentBlockParam[] => [
+          {
+            type: "text",
+            text: photoLabel(request.images[index]!, index, images.length),
+          },
+          imageBlock(prepared),
+        ],
+      ),
       // Each label precedes its image so the model reads the channel first.
       ...evidence.flatMap(
         (prepared, index): Anthropic.Messages.ContentBlockParam[] => [
@@ -146,28 +179,36 @@ export class AnthropicDiagnosisEngine implements DiagnosisEngine {
       { type: "text", text: contextText(request) },
     ];
 
-    let response: Anthropic.Messages.Message;
-    try {
-      response = await this.client.messages.create({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens,
-        thinking: { type: "adaptive" },
-        output_config: {
-          effort: this.config.effort,
-          format: {
-            type: "json_schema",
-            schema: ANALYSIS_JSON_SCHEMA,
-          },
+    const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
+      model: this.config.model,
+      max_tokens: this.config.maxTokens,
+      thinking: { type: "adaptive" },
+      output_config: {
+        effort: this.config.effort,
+        format: {
+          type: "json_schema",
+          schema: ANALYSIS_JSON_SCHEMA,
         },
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [{ role: "user", content }],
-      });
+      },
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      messages: [{ role: "user", content }],
+    };
+
+    let response: ProviderResponse;
+    try {
+      response = this.config.refusalFallbackModel
+        ? await this.client.beta.messages.create({
+            ...(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming),
+            betas: ["server-side-fallback-2026-06-01"],
+            fallbacks: [{ model: this.config.refusalFallbackModel }],
+          })
+        : await this.client.messages.create(params);
     } catch (error) {
       if (error instanceof Anthropic.AuthenticationError) {
         throw new ProviderUnavailableError(
@@ -201,9 +242,10 @@ export class AnthropicDiagnosisEngine implements DiagnosisEngine {
 
     let analysis: Analysis;
     try {
-      analysis = applySafetyRules(
-        parseAnalysis(normalizeAnalysis(parsedJson)),
-      );
+      analysis = applySafetyRules(parseAnalysis(normalizeAnalysis(parsedJson)), {
+        description: request.description,
+        answers: request.answers.map((answer) => answer.answer),
+      });
     } catch (error) {
       throw new ProviderResponseError(
         "The analysis provider returned data outside the diagnosis contract.",
@@ -222,7 +264,9 @@ export class AnthropicDiagnosisEngine implements DiagnosisEngine {
 
     return {
       analysis,
-      metadata: metadata(response, this.config.model),
+      // The served model can differ from the configured one when a refusal
+      // fallback ran; record what actually produced the result.
+      metadata: metadata(response, response.model || this.config.model),
     };
   }
 }
