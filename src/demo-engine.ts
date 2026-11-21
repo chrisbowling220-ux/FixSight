@@ -26,10 +26,11 @@ function pick(request: AnalyzeRequest): Scenario {
   if (/\b(blurry|blurred|dark photo|retake)\b/.test(text)) return "retake";
   if (/\b(car|vehicle|truck|dog|cat|person)\b/.test(text)) return "unrelated";
   if (/\b(outlet|electrical|spark|switch|breaker|wiring)\b/.test(text)) return "electrical";
+  if (/\b(crack|cracks|drywall|plaster|nail pop)\b/.test(text)) return "crack";
   if (/\b(window|door|seal|fogg?ed|draft)\b/.test(text)) return "window";
   if (/\b(pipe|plumbing|sink|faucet|drip|valve|toilet)\b/.test(text)) return "plumbing";
   if (/\b(ceiling|stain|roof|water spot|leak)\b/.test(text)) return "ceiling";
-  if (/\b(crack|drywall|wall|plaster|nail pop)\b/.test(text)) return "crack";
+  if (/\bwall\b/.test(text)) return "crack";
   return "general";
 }
 

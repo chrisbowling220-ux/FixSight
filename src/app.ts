@@ -225,6 +225,12 @@ export function createApp({
           baseUri: ["'self'"],
           formAction: ["'self'"],
           frameAncestors: ["'none'"],
+          // Helmet adds upgrade-insecure-requests by default. Over plain http
+          // on a local network (how phones reach a development server) it
+          // rewrites every same-origin script and stylesheet to https, which
+          // fails and leaves a blank page. All assets are same-origin, so it
+          // adds nothing on an https deployment either.
+          upgradeInsecureRequests: null,
         },
       },
       crossOriginEmbedderPolicy: false,
@@ -274,6 +280,13 @@ export function createApp({
   app.post("/api/analyze", paid, analyze);
   app.use("/api/v1/scans", paid, scanRouter);
   app.use("/api/voice", voiceRouter);
+
+  // On Vercel the platform serves this analytics script before the app runs.
+  // Elsewhere, answer with an empty script instead of an HTML 404 that the
+  // browser refuses to execute.
+  app.get("/_vercel/insights/script.js", (_request, response) => {
+    response.type("application/javascript").send("");
+  });
 
   app.use(
     express.static(publicDir, {

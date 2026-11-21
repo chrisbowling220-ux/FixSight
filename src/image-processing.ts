@@ -73,14 +73,14 @@ function orientedDimensions(
 // Sharp integration (optional — fails gracefully on old CPUs)
 // ---------------------------------------------------------------------------
 
-type SharpModule = typeof import("sharp");
+type SharpModule = (typeof import("sharp"))["default"];
 let sharpModule: SharpModule | null | undefined = undefined; // undefined = not probed yet
 
 async function tryGetSharp(): Promise<SharpModule | null> {
   if (sharpModule !== undefined) return sharpModule;
   try {
     const mod = await import("sharp");
-    sharpModule = mod.default as SharpModule;
+    sharpModule = mod.default;
     return sharpModule;
   } catch {
     sharpModule = null;

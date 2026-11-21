@@ -32,3 +32,6 @@ Thumbs.db
 
 # Workspace-local development tools
 .toolchain/
+
+# Browser test screenshots and downloads
+test/e2e/artifacts/
