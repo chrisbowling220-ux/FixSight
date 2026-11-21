@@ -37,6 +37,12 @@ Leave `RATE_LIMIT_MAX` at its default (20 analyses per 15 minutes per visitor). 
 - Anthropic Console → Settings → Limits: set a monthly spend limit (for example $50) and an email alert.
 - ElevenLabs: your plan's character quota is the cap; keep it low or remove the key.
 
+## Preview status (2026-11-21)
+
+- Branch pushed; protected preview live at `https://fixsight-git-claude-fixsi-36c581-chrisbowling220-6638s-projects.vercel.app` (requires Vercel login). `main` and production unchanged.
+- Every non-production Vercel deployment is locked to demo mode by the code itself (no provider keys loaded), whatever the Preview environment variables contain. `/api/health` on the preview shows `"environment":"preview","demo_mode":true,"paid_providers_enabled":false`, so step 2 below is no longer needed.
+- Verified on the live preview with phone (Chrome), iPad (WebKit), and desktop (Chrome) profiles: navigation, photos, sample diagnosis with questions, customer/job, inspection and job PDFs, service worker, security headers.
+
 ## Exact steps
 
 1. **You approve, then I run:** `git push -u origin claude/fixsight-release-candidate`. Vercel builds a preview automatically (about 2 minutes).
@@ -44,7 +50,7 @@ Leave `RATE_LIMIT_MAX` at its default (20 analyses per 15 minutes per visitor). 
 3. On your phone, sign in at vercel.com in the browser (previews are protected), open the preview link from the Vercel dashboard, and run **checklist A** below.
 4. Enter the Production settings above and set the Anthropic spend limit.
 5. On GitHub, open a pull request from `claude/fixsight-release-candidate` to `main` and merge it. Vercel deploys to production; the domain switches to the new app within a couple of minutes.
-6. Open `https://fixsight.contractor-office.com/api/health`. It must show `"prompt_version":"prompt_v5"`, `"access_code_required":true`, `"demo_mode":false`.
+6. Open `https://fixsight.contractor-office.com/api/health`. It must show `"prompt_version":"prompt_v5"`, `"environment":"production"`, `"access_code_required":true`, `"demo_mode":false`, `"paid_providers_enabled":true`.
 7. On each device (phone, tablet, computer): open the site → Settings → enter the access code → install it (below) → run **checklist B**.
 
 ## Real-device checklist
